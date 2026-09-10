@@ -1,0 +1,14 @@
+node_modules/
+.env
+.env.local
+*.local
+dist/
+build/
+client/dist/
+.netlify/
+coverage/
+*.log
+npm-debug.log*
+.DS_Store
+.vscode/
+.idea/

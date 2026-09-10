@@ -1,0 +1,25 @@
+[build]
+  command = "npm install && npm run build --workspace client"
+  publish = "client/dist"
+  functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
+  # Mongoose/mongodb pull in a handful of optional native/dynamic-require
+  # deps (kerberos, aws4, mongodb-client-encryption, snappy, ...) that esbuild
+  # can't statically trace. They're only used if you opt into those features,
+  # which this project doesn't, so we exclude them from bundling rather than
+  # let a missing-optional-dep warning become a broken deploy.
+  external_node_modules = ["kerberos", "aws4", "mongodb-client-encryption", "snappy", "@mongodb-js/zstd"]
+
+# Route API calls to the Express app running as a Netlify Function.
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/api/:splat"
+  status = 200
+
+# SPA fallback so client-side routing (if added) survives a hard refresh.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
