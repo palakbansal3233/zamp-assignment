@@ -1,0 +1,907 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/nocturne-713b2b6d-6de7-4647-bcdc-a22e3edd272d/styles.css">
+  <script src="_ds/nocturne-713b2b6d-6de7-4647-bcdc-a22e3edd272d/_ds_bundle.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
+  <style>
+    body { margin: 0; overflow: hidden; }
+    a { color: var(--color-accent-300); }
+    a:hover { color: var(--color-accent-200); }
+    @keyframes sift-pulse { 0% { box-shadow: 0 0 0 0 rgba(145,132,217,0.55); } 100% { box-shadow: 0 0 0 10px rgba(145,132,217,0); } }
+    @keyframes sift-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(400%); } }
+    @keyframes sift-blink { 0%, 100% { opacity: 0.25; } 50% { opacity: 1; } }
+  </style>
+</helmet>
+
+<div style="display:flex;height:100vh;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);font-size:15px;position:relative">
+
+  <nav style="width:64px;flex:0 0 64px;display:flex;flex-direction:column;align-items:center;gap:var(--space-4);padding:var(--space-6) 0;border-right:1px solid var(--color-neutral-900);background:linear-gradient(180deg,var(--color-surface),var(--color-bg))">
+    <div style="width:28px;height:28px;border-radius:var(--radius-sm);border:1px solid var(--color-accent);display:grid;place-items:center;font-family:var(--font-heading);font-size:13px;color:var(--color-accent-300);margin-bottom:var(--space-4)">S</div>
+    <sc-for list="{{ navItems }}" as="item" hint-placeholder-count="3">
+      <button type="button" onClick="{{ item.go }}" title="{{ item.label }}" style="{{ item.style }}" style-hover="background:var(--color-accent-900);color:var(--color-accent-200)">
+        <i class="{{ item.icon }}" style="font-size:19px"></i>
+      </button>
+    </sc-for>
+    <div style="flex:1"></div>
+    <button type="button" onClick="{{ toggleStates }}" title="States" style="{{ statesBtnStyle }}" style-hover="background:var(--color-accent-900);color:var(--color-accent-200)">
+      <i class="ph ph-flask" style="font-size:18px"></i>
+    </button>
+  </nav>
+
+  <main style="flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden;position:relative">
+
+    <div style="height:2px;background:var(--color-neutral-900);flex:0 0 2px;overflow:hidden">
+      <div style="{{ topBarStyle }}"></div>
+    </div>
+
+    <sc-if value="{{ hasBanner }}" hint-placeholder-val="{{ false }}">
+      <div style="{{ bannerStyle }}">
+        <i class="{{ bannerIcon }}" style="font-size:16px"></i>
+        <span style="flex:1;min-width:0;font-size:13px;text-wrap:pretty"><b style="font-weight:500">{{ bannerTitle }}</b> {{ bannerText }}</span>
+        <button type="button" class="btn btn-secondary" style="font-size:12px;padding:4px 10px" onClick="{{ bannerAction }}">{{ bannerCta }}</button>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isIngest }}" hint-placeholder-val="{{ true }}">
+      <div style="padding:var(--space-8) var(--space-8) var(--space-6);display:flex;align-items:flex-end;justify-content:space-between;gap:var(--space-6)">
+        <div>
+          <h6 style="margin:0 0 var(--space-2);color:var(--color-neutral-500)">Ingest</h6>
+          <h3 style="margin:0">Drop anything in. We work out the shape.</h3>
+        </div>
+        <button type="button" class="btn btn-primary" onClick="{{ addDoc }}"><i class="ph ph-plus"></i>Add document</button>
+      </div>
+
+      <div style="flex:1;min-height:0;overflow:auto;padding:0 var(--space-8) var(--space-8)">
+        <div onClick="{{ addDoc }}" style="{{ dropStyle }}" style-hover="border-color:var(--color-accent)">
+          <i class="ph ph-tray-arrow-down" style="font-size:26px;color:var(--color-accent-300)"></i>
+          <div style="font-family:var(--font-heading);font-size:16px">Drop PDFs, scans, emails, spreadsheets</div>
+          <div class="text-muted" style="font-size:13px;text-align:center;text-wrap:pretty">{{ dropNote }}</div>
+        </div>
+
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin:var(--space-8) 0 var(--space-3)">
+          <h6 style="margin:0;color:var(--color-neutral-500)">Queue</h6>
+          <span class="text-muted" style="font-size:12px">{{ readyLabel }}</span>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:var(--space-2)">
+          <sc-for list="{{ queue }}" as="d" hint-placeholder-count="4">
+            <div style="{{ d.rowStyle }}">
+              <div onClick="{{ d.open }}" style="display:flex;align-items:center;gap:var(--space-4);cursor:{{ d.cursor }}">
+                <i class="{{ d.icon }}" style="{{ d.iconStyle }}"></i>
+                <div style="min-width:0;flex:1">
+                  <div style="font-family:var(--font-heading);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ d.name }}</div>
+                  <div style="{{ d.subStyle }}">{{ d.sub }}</div>
+                </div>
+                <span class="{{ d.tagClass }}">{{ d.kind }}</span>
+                <div style="width:158px;flex:0 0 158px;text-align:right">
+                  <sc-if value="{{ d.busy }}" hint-placeholder-val="{{ false }}">
+                    <div style="height:3px;border-radius:2px;background:var(--color-neutral-900);overflow:hidden">
+                      <div style="{{ d.barStyle }}"></div>
+                    </div>
+                    <div class="text-muted" style="font-size:11px;margin-top:5px">{{ d.stage }}</div>
+                  </sc-if>
+                  <sc-if value="{{ d.done }}" hint-placeholder-val="{{ true }}">
+                    <div style="font-size:12px;color:var(--color-accent-300)">{{ d.fieldCount }}</div>
+                    <div class="text-muted" style="font-size:11px;margin-top:2px">{{ d.flagLabel }}</div>
+                  </sc-if>
+                </div>
+              </div>
+              <sc-if value="{{ d.hasActions }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;gap:var(--space-2);margin:var(--space-3) 0 0 34px">
+                  <sc-for list="{{ d.actions }}" as="a" hint-placeholder-count="2">
+                    <button type="button" class="{{ a.cls }}" style="font-size:12px;padding:4px 10px" onClick="{{ a.run }}">{{ a.label }}</button>
+                  </sc-for>
+                </div>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isReview }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;align-items:center;gap:var(--space-4);padding:var(--space-4) var(--space-8);border-bottom:1px solid var(--color-neutral-900)">
+        <div style="display:flex;gap:var(--space-1);background:var(--color-surface);padding:3px;border-radius:var(--radius-md)">
+          <sc-for list="{{ docTabs }}" as="t" hint-placeholder-count="2">
+            <button type="button" onClick="{{ t.go }}" style="{{ t.style }}">{{ t.label }}</button>
+          </sc-for>
+        </div>
+        <div style="flex:1"></div>
+        <span class="text-muted" style="font-size:12px">{{ reviewMeta }}</span>
+        <button type="button" class="btn btn-ghost" onClick="{{ goAsk }}"><i class="ph ph-sparkle"></i>Ask this document</button>
+      </div>
+
+      <div style="flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
+        <div style="min-width:0;overflow:auto;padding:var(--space-8);border-right:1px solid var(--color-neutral-900)">
+          <sc-if value="{{ docUnreadable }}" hint-placeholder-val="{{ false }}">
+            <div style="max-width:640px;margin:0 auto;border:1px dashed var(--color-neutral-800);border-radius:var(--radius-md);padding:var(--space-8);display:flex;flex-direction:column;align-items:center;gap:var(--space-3);text-align:center">
+              <i class="ph ph-file-dashed" style="font-size:28px;color:var(--color-neutral-500)"></i>
+              <div style="font-family:var(--font-heading);font-size:16px">{{ unreadableTitle }}</div>
+              <div class="text-muted" style="font-size:13px;max-width:44ch;text-wrap:pretty">{{ unreadableText }}</div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ docReadable }}" hint-placeholder-val="{{ true }}">
+            <div style="max-width:640px;margin:0 auto;background:var(--color-surface);border-radius:var(--radius-md);box-shadow:var(--shadow-md);padding:38px 42px 46px">
+              <sc-for list="{{ docLines }}" as="l" hint-placeholder-count="14">
+                <div style="{{ l.style }}">
+                  <div style="{{ l.leftStyle }}">
+                    <sc-for list="{{ l.segs }}" as="s" hint-placeholder-count="1">
+                      <span onClick="{{ s.click }}" onMouseEnter="{{ s.enter }}" onMouseLeave="{{ s.leave }}" style="{{ s.style }}">{{ s.text }}</span>
+                    </sc-for>
+                  </div>
+                  <sc-if value="{{ l.hasAmt }}" hint-placeholder-val="{{ false }}">
+                    <span style="{{ l.amtStyle }}">{{ l.amt }}</span>
+                  </sc-if>
+                </div>
+              </sc-for>
+              <sc-if value="{{ docTruncated }}" hint-placeholder-val="{{ false }}">
+                <div style="margin-top:var(--space-6);padding-top:var(--space-4);border-top:1px solid var(--color-neutral-900);font-size:12px;color:var(--color-neutral-500);text-wrap:pretty">{{ truncatedNote }}</div>
+              </sc-if>
+            </div>
+          </sc-if>
+        </div>
+
+        <div style="min-width:0;overflow:auto;padding:var(--space-8)">
+          <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:var(--space-4)">
+            <div>
+              <h6 style="margin:0 0 var(--space-1);color:var(--color-neutral-500)">Inferred record</h6>
+              <div class="text-muted" style="font-size:12px;text-wrap:pretty">{{ schemaNote }}</div>
+            </div>
+            <button type="button" class="btn btn-ghost" onClick="{{ clearActive }}" style="font-size:12px">Clear</button>
+          </div>
+
+          <sc-if value="{{ hasExtractionNotice }}" hint-placeholder-val="{{ false }}">
+            <div style="{{ noticeStyle }}">
+              <div style="display:flex;align-items:center;gap:var(--space-3)">
+                <i class="{{ noticeIcon }}" style="font-size:16px;color:var(--color-accent-300)"></i>
+                <div style="flex:1;min-width:0">
+                  <div style="font-family:var(--font-heading);font-size:13px">{{ noticeTitle }}</div>
+                  <div class="text-muted" style="font-size:12px;text-wrap:pretty">{{ noticeText }}</div>
+                </div>
+              </div>
+              <div style="display:flex;gap:var(--space-2);margin-top:var(--space-3)">
+                <sc-for list="{{ noticeActions }}" as="a" hint-placeholder-count="2">
+                  <button type="button" class="{{ a.cls }}" style="font-size:12px;padding:4px 10px" onClick="{{ a.run }}">{{ a.label }}</button>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+
+          <div style="display:flex;flex-direction:column;gap:var(--space-1)">
+            <sc-for list="{{ fieldRows }}" as="f" hint-placeholder-count="8">
+              <div onClick="{{ f.click }}" onMouseEnter="{{ f.enter }}" onMouseLeave="{{ f.leave }}" style="{{ f.style }}">
+                <div style="display:flex;align-items:center;gap:var(--space-3)">
+                  <div style="width:150px;flex:0 0 150px;font-size:12px;color:var(--color-neutral-500);font-variant:all-small-caps;letter-spacing:0.06em">{{ f.label }}</div>
+                  <div style="{{ f.valueStyle }}">{{ f.value }}</div>
+                  <div style="width:74px;flex:0 0 74px;display:flex;justify-content:flex-end;align-items:center;gap:6px">
+                    <sc-if value="{{ f.showBar }}" hint-placeholder-val="{{ true }}">
+                      <div style="width:44px;height:3px;border-radius:2px;background:var(--color-neutral-900);overflow:hidden">
+                        <div style="{{ f.confStyle }}"></div>
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{ f.showPct }}" hint-placeholder-val="{{ false }}">
+                      <span style="{{ f.pctStyle }}">{{ f.pct }}</span>
+                    </sc-if>
+                  </div>
+                </div>
+                <sc-if value="{{ f.needsCheck }}" hint-placeholder-val="{{ false }}">
+                  <div style="display:flex;align-items:center;flex-wrap:wrap;gap:var(--space-3);margin:var(--space-3) 0 var(--space-1) 162px">
+                    <span style="font-size:12px;color:var(--color-accent-300);text-wrap:pretty"><i class="ph ph-warning-circle" style="vertical-align:-2px;margin-right:5px"></i>{{ f.checkNote }}</span>
+                    <sc-for list="{{ f.checkActions }}" as="a" hint-placeholder-count="1">
+                      <button type="button" class="{{ a.cls }}" style="font-size:12px;padding:4px 10px" onClick="{{ a.run }}">{{ a.label }}</button>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+            <sc-for list="{{ skeletonRows }}" as="k" hint-placeholder-count="0">
+              <div style="display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-4);opacity:0.5">
+                <div style="width:150px;flex:0 0 150px;height:8px;border-radius:2px;background:var(--color-neutral-900)"></div>
+                <div style="{{ k.style }}"></div>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="margin-top:var(--space-8);padding:var(--space-4) var(--space-6);border:1px solid var(--color-neutral-900);border-radius:var(--radius-md);background:var(--color-surface)">
+            <div style="font-family:var(--font-heading);font-size:13px;margin-bottom:var(--space-2)">Fields this document added to the dataset</div>
+            <div style="display:flex;flex-wrap:wrap;gap:var(--space-2)">
+              <sc-for list="{{ newFields }}" as="n" hint-placeholder-count="3">
+                <span class="tag tag-outline" style="font-size:11px">{{ n.label }}</span>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isAsk }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;min-height:0;overflow:auto;padding:var(--space-8)">
+        <div style="max-width:820px;margin:0 auto">
+          <h6 style="margin:0 0 var(--space-2);color:var(--color-neutral-500)">Ask</h6>
+          <h3 style="margin:0 0 var(--space-6);text-wrap:pretty">{{ askHeading }}</h3>
+
+          <div style="display:flex;gap:var(--space-2);align-items:center;border:1px solid var(--color-neutral-800);border-radius:var(--radius-md);background:var(--color-surface);padding:var(--space-3) var(--space-4)">
+            <i class="ph ph-magnifying-glass" style="font-size:17px;color:var(--color-neutral-500)"></i>
+            <input value="{{ draft }}" onChange="{{ onDraft }}" onKeyDown="{{ onKey }}" placeholder="Ask across every document…" style="flex:1;min-width:0;background:transparent;border:0;outline:none;color:var(--color-text);font-family:var(--font-body);font-size:15px">
+            <button type="button" class="btn btn-primary" style="font-size:12px;padding:5px 12px" onClick="{{ submit }}">Ask</button>
+          </div>
+
+          <sc-if value="{{ askBusy }}" hint-placeholder-val="{{ false }}">
+            <div style="margin-top:var(--space-4);border:1px solid var(--color-neutral-900);border-radius:var(--radius-md);padding:var(--space-4) var(--space-6);background:var(--color-surface)">
+              <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:var(--space-2)">
+                <span>{{ askBusyStage }}</span>
+                <span class="text-muted">{{ askBusyPct }}</span>
+              </div>
+              <div style="height:3px;border-radius:2px;background:var(--color-neutral-900);overflow:hidden">
+                <div style="{{ askBusyBar }}"></div>
+              </div>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ hasAskError }}" hint-placeholder-val="{{ false }}">
+            <div style="margin-top:var(--space-4);border:1px solid var(--color-neutral-800);border-radius:var(--radius-md);padding:var(--space-6);background:var(--color-surface)">
+              <div style="display:flex;align-items:center;gap:var(--space-3);margin-bottom:var(--space-2)">
+                <i class="{{ askErrIcon }}" style="font-size:17px;color:var(--color-accent-300)"></i>
+                <div style="font-family:var(--font-heading);font-size:16px">{{ askErrTitle }}</div>
+              </div>
+              <div class="text-muted" style="font-size:13px;text-wrap:pretty;margin-bottom:var(--space-4)">{{ askErrText }}</div>
+              <div style="display:flex;flex-wrap:wrap;gap:var(--space-2)">
+                <sc-for list="{{ askErrActions }}" as="a" hint-placeholder-count="2">
+                  <button type="button" class="{{ a.cls }}" style="font-size:12px;padding:5px 11px" onClick="{{ a.run }}">{{ a.label }}</button>
+                </sc-for>
+              </div>
+              <sc-if value="{{ askErrDetail }}" hint-placeholder-val="{{ false }}">
+                <div style="margin-top:var(--space-4);font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--color-neutral-500);border-top:1px solid var(--color-neutral-900);padding-top:var(--space-3)">{{ askErrCode }}</div>
+              </sc-if>
+            </div>
+          </sc-if>
+
+          <sc-if value="{{ hasAnswer }}" hint-placeholder-val="{{ false }}">
+            <div style="margin-top:var(--space-6);border:1px solid var(--color-accent-800);border-radius:var(--radius-md);background:linear-gradient(180deg,rgba(145,132,217,0.10),transparent 60%);padding:var(--space-6)">
+              <div class="text-muted" style="font-size:12px;margin-bottom:var(--space-2)">{{ answerQuestion }}</div>
+              <div style="font-family:var(--font-heading);font-size:21px;line-height:1.3;text-wrap:pretty">{{ answerText }}</div>
+              <sc-if value="{{ answerCaveat }}" hint-placeholder-val="{{ false }}">
+                <div style="margin-top:var(--space-3);font-size:12.5px;color:var(--color-accent-300);text-wrap:pretty">{{ answerCaveatText }}</div>
+              </sc-if>
+              <div style="display:flex;flex-wrap:wrap;gap:var(--space-2);margin-top:var(--space-6);align-items:center">
+                <span class="text-muted" style="font-size:11px;letter-spacing:0.06em;text-transform:uppercase">Read from</span>
+                <sc-for list="{{ citations }}" as="c" hint-placeholder-count="2">
+                  <button type="button" onClick="{{ c.go }}" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;font-family:var(--font-body);color:var(--color-accent-200);background:var(--color-accent-900);border:1px solid var(--color-accent-700);border-radius:999px;padding:3px 10px;cursor:pointer" style-hover="background:var(--color-accent-800)">
+                    <i class="ph ph-file-text" style="font-size:13px"></i>{{ c.label }}
+                  </button>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+
+          <div style="display:flex;align-items:baseline;justify-content:space-between;margin:var(--space-8) 0 var(--space-3);gap:var(--space-4)">
+            <h6 style="margin:0;color:var(--color-neutral-500)">Questions this corpus can answer</h6>
+            <span class="text-muted" style="font-size:12px;text-align:right">ranked by how completely the data supports an answer</span>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:var(--space-1)">
+            <sc-for list="{{ suggestions }}" as="q" hint-placeholder-count="6">
+              <button type="button" onClick="{{ q.ask }}" style="{{ q.style }}" style-hover="border-color:var(--color-accent-700);background:var(--color-accent-900)">
+                <span style="width:20px;flex:0 0 20px;font-size:11px;color:var(--color-neutral-600)">{{ q.rank }}</span>
+                <span style="flex:1;min-width:0;font-size:14px;text-wrap:pretty">{{ q.text }}</span>
+                <span class="text-muted" style="font-size:11px;white-space:nowrap">{{ q.source }}</span>
+                <span style="width:56px;flex:0 0 56px;height:3px;border-radius:2px;background:var(--color-neutral-900);overflow:hidden">
+                  <span style="{{ q.barStyle }}"></span>
+                </span>
+              </button>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isNotFound }}" hint-placeholder-val="{{ false }}">
+      <div style="flex:1;min-height:0;display:grid;place-items:center;padding:var(--space-8)">
+        <div style="max-width:460px;text-align:center">
+          <div style="font-family:var(--font-heading);font-size:56px;color:var(--color-accent-800);line-height:1">404</div>
+          <h4 style="margin:var(--space-4) 0 var(--space-2)">That document isn't here</h4>
+          <p class="text-muted" style="font-size:13.5px;text-wrap:pretty">The record <span style="font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--color-neutral-300)">doc_8842/fields/po_reference</span> was deleted on 2 September when its source file was removed from the corpus. Its extracted fields went with it.</p>
+          <div style="display:flex;gap:var(--space-2);justify-content:center;margin-top:var(--space-6)">
+            <button type="button" class="btn btn-primary" onClick="{{ goIngest }}">Back to queue</button>
+            <button type="button" class="btn btn-ghost" onClick="{{ goAsk }}">Search the corpus</button>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+  </main>
+
+  <sc-if value="{{ statesOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;left:72px;bottom:var(--space-6);width:308px;background:var(--color-surface);border:1px solid var(--color-neutral-800);border-radius:var(--radius-md);box-shadow:var(--shadow-lg);padding:var(--space-4);z-index:40">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--space-3)">
+        <h6 style="margin:0;color:var(--color-neutral-500)">States</h6>
+        <button type="button" onClick="{{ toggleStates }}" style="background:transparent;border:0;color:var(--color-neutral-500);cursor:pointer"><i class="ph ph-x" style="font-size:14px"></i></button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:2px;max-height:60vh;overflow:auto">
+        <sc-for list="{{ scenarios }}" as="sc" hint-placeholder-count="12">
+          <button type="button" onClick="{{ sc.run }}" style="{{ sc.style }}" style-hover="background:var(--color-accent-900)">
+            <span style="font-size:12.5px">{{ sc.label }}</span>
+            <span class="text-muted" style="font-size:11px;text-wrap:pretty">{{ sc.note }}</span>
+          </button>
+        </sc-for>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ chatOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute;right:var(--space-6);bottom:var(--space-6);width:352px;max-height:min(560px,calc(100vh - 48px));display:flex;flex-direction:column;background:var(--color-surface);border:1px solid var(--color-neutral-800);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);z-index:50;overflow:hidden">
+      <div style="display:flex;align-items:center;gap:var(--space-3);padding:var(--space-4) var(--space-4) var(--space-3);border-bottom:1px solid var(--color-neutral-900)">
+        <span style="width:7px;height:7px;border-radius:50%;background:{{ chatDot }}"></span>
+        <div style="flex:1;min-width:0">
+          <div style="font-family:var(--font-heading);font-size:13px">Ask Sift</div>
+          <div class="text-muted" style="font-size:11px">{{ chatStatus }}</div>
+        </div>
+        <button type="button" onClick="{{ toggleChat }}" style="background:transparent;border:0;color:var(--color-neutral-500);cursor:pointer" style-hover="color:var(--color-accent-200)"><i class="ph ph-minus" style="font-size:15px"></i></button>
+      </div>
+
+      <sc-if value="{{ chatBusy }}" hint-placeholder-val="{{ false }}">
+        <div style="height:2px;background:var(--color-neutral-900);overflow:hidden">
+          <div style="{{ chatBarStyle }}"></div>
+        </div>
+      </sc-if>
+
+      <div style="flex:1;min-height:0;overflow:auto;padding:var(--space-4);display:flex;flex-direction:column;gap:var(--space-3)">
+        <sc-for list="{{ chatMsgs }}" as="m" hint-placeholder-count="2">
+          <div style="{{ m.wrapStyle }}">
+            <div style="{{ m.bubbleStyle }}">
+              <sc-if value="{{ m.hasTitle }}" hint-placeholder-val="{{ false }}">
+                <div style="font-family:var(--font-heading);font-size:12.5px;margin-bottom:4px;color:var(--color-accent-200)">{{ m.title }}</div>
+              </sc-if>
+              <div style="font-size:13px;line-height:1.5;text-wrap:pretty">{{ m.text }}</div>
+              <sc-if value="{{ m.hasCites }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:var(--space-3)">
+                  <sc-for list="{{ m.cites }}" as="c" hint-placeholder-count="1">
+                    <button type="button" onClick="{{ c.go }}" style="font-size:11px;color:var(--color-accent-200);background:var(--color-accent-900);border:1px solid var(--color-accent-700);border-radius:999px;padding:2px 8px;cursor:pointer;font-family:var(--font-body)">{{ c.label }}</button>
+                  </sc-for>
+                </div>
+              </sc-if>
+              <sc-if value="{{ m.hasActions }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-wrap:wrap;gap:var(--space-2);margin-top:var(--space-3)">
+                  <sc-for list="{{ m.actions }}" as="a" hint-placeholder-count="1">
+                    <button type="button" class="{{ a.cls }}" style="font-size:11.5px;padding:3px 9px" onClick="{{ a.run }}">{{ a.label }}</button>
+                  </sc-for>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+        </sc-for>
+        <sc-if value="{{ chatTyping }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;gap:4px;padding:var(--space-2) var(--space-3)">
+            <span style="width:5px;height:5px;border-radius:50%;background:var(--color-accent-400);animation:sift-blink 1s infinite"></span>
+            <span style="width:5px;height:5px;border-radius:50%;background:var(--color-accent-400);animation:sift-blink 1s infinite 0.2s"></span>
+            <span style="width:5px;height:5px;border-radius:50%;background:var(--color-accent-400);animation:sift-blink 1s infinite 0.4s"></span>
+          </div>
+        </sc-if>
+      </div>
+
+      <sc-if value="{{ chatHasChips }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;gap:5px;padding:0 var(--space-4) var(--space-3);flex-wrap:wrap">
+          <sc-for list="{{ chatChips }}" as="c" hint-placeholder-count="2">
+            <button type="button" onClick="{{ c.run }}" style="font-size:11.5px;color:var(--color-neutral-300);background:transparent;border:1px solid var(--color-neutral-800);border-radius:999px;padding:3px 9px;cursor:pointer;font-family:var(--font-body);text-align:left" style-hover="border-color:var(--color-accent-700);color:var(--color-accent-200)">{{ c.label }}</button>
+          </sc-for>
+        </div>
+      </sc-if>
+
+      <div style="display:flex;align-items:center;gap:var(--space-2);padding:var(--space-3) var(--space-4);border-top:1px solid var(--color-neutral-900)">
+        <input value="{{ chatDraft }}" onChange="{{ onChatDraft }}" onKeyDown="{{ onChatKey }}" placeholder="{{ chatPlaceholder }}" disabled="{{ chatDisabled }}" style="flex:1;min-width:0;background:transparent;border:0;outline:none;color:var(--color-text);font-family:var(--font-body);font-size:13px">
+        <button type="button" onClick="{{ chatSend }}" title="Send" style="{{ chatSendStyle }}"><i class="ph ph-paper-plane-right" style="font-size:15px"></i></button>
+      </div>
+    </div>
+  </sc-if>
+
+  <sc-if value="{{ chatClosed }}" hint-placeholder-val="{{ true }}">
+    <button type="button" onClick="{{ toggleChat }}" style="position:absolute;right:var(--space-6);bottom:var(--space-6);z-index:50;display:flex;align-items:center;gap:var(--space-2);background:var(--color-surface);border:1px solid var(--color-accent-700);color:var(--color-accent-200);border-radius:999px;padding:9px 15px;cursor:pointer;font-family:var(--font-heading);font-size:13px;box-shadow:var(--shadow-md)" style-hover="background:var(--color-accent-900)">
+      <i class="ph ph-chat-teardrop-dots" style="font-size:16px"></i>Ask Sift
+      <sc-if value="{{ chatBadge }}" hint-placeholder-val="{{ false }}">
+        <span style="width:6px;height:6px;border-radius:50%;background:var(--color-accent)"></span>
+      </sc-if>
+    </button>
+  </sc-if>
+
+  <sc-if value="{{ sessionExpired }}" hint-placeholder-val="{{ false }}">
+    <div class="dialog-backdrop" style="position:absolute;inset:0;z-index:60;display:grid;place-items:center;background:rgba(0,0,0,0.6)">
+      <div class="dialog" style="max-width:400px">
+        <div class="dialog-title">Your session expired</div>
+        <div class="dialog-body" style="text-wrap:pretty">You were signed out after 30 minutes idle. Two field confirmations from this review are held locally and will be submitted when you sign back in.</div>
+        <div class="dialog-actions">
+          <button type="button" class="btn btn-ghost" onClick="{{ dismissSession }}">Keep reading</button>
+          <button type="button" class="btn btn-primary" onClick="{{ dismissSession }}">Sign back in</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1280,&quot;height&quot;:860},&quot;confidence&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;bar&quot;,&quot;percent&quot;,&quot;hidden&quot;],&quot;default&quot;:&quot;bar&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Review&quot;},&quot;showProvenance&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Review&quot;},&quot;suggestionCount&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:6,&quot;min&quot;:3,&quot;max&quot;:6,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Ask&quot;}}">
+const DOCS = [
+  {
+    id: 'inv', name: 'northwind-invoice-2291.pdf', kind: 'Invoice', icon: 'ph ph-receipt',
+    label: 'Invoice 2291', meta: 'PDF · 1 page · text layer found · read in 1.4s',
+    schemaNote: '11 fields inferred from the document itself — no template was applied',
+    newFields: ['discount_pct', 'vat_id', 'delivery_site'],
+    lines: [
+      { k: 'h', segs: [['NORTHWIND SUPPLY CO.', null]] },
+      { k: 'small', segs: [['Unit 4, Ashbourne Business Park, Co. Meath, Ireland', null]] },
+      { k: 'gap', segs: [['', null]] },
+      { k: 'row', segs: [['Invoice ', null], ['INV-2291', 'invoice_no'], ['   ·   Issued ', null], ['14 March 2025', 'issue_date']] },
+      { k: 'p', segs: [['Bill to ', null], ['Meridian Health Group, 40 Pearse Street, Dublin 2', 'customer']] },
+      { k: 'p', segs: [['Deliver to ', null], ['Meridian Clinic — Sandyford', 'delivery_site']] },
+      { k: 'gap', segs: [['', null]] },
+      { k: 'li', amt: '5,120.00', segs: [['Nitrile gloves, M, case of 1000 · 8 × 640.00', null]] },
+      { k: 'li', amt: '3,780.00', segs: [['Sterile drape kit · 12 × 315.00', null]] },
+      { k: 'li', amt: '3,500.00', segs: [['Sharps bin 7L · 40 × 87.50', null]] },
+      { k: 'gap', segs: [['', null]] },
+      { k: 'sum', amt: '12,400.00', segs: [['Subtotal', null]] },
+      { k: 'sum', amt: '-496.00', segs: [['Volume discount ', null], ['4%', 'discount_pct']] },
+      { k: 'sum', amt: '2,847.92', segs: [['VAT 23%', null]] },
+      { k: 'row', segs: [['Total due   ', null], ['EUR 14,751.92', 'total']] },
+      { k: 'gap', segs: [['', null]] },
+      { k: 'p', segs: [['Payment terms: ', null], ['Net 45 days from invoice date', 'terms'], ['. Late balances accrue 1.5% monthly.', null]] },
+      { k: 'small', segs: [['VAT ID ', null], ['IE 4839201K', 'vat_id'], ['   ·   PO reference MHG-PO-8842', null]] }
+    ],
+    fields: [
+      { id: 'invoice_no', label: 'invoice_no', value: 'INV-2291', conf: 0.99 },
+      { id: 'issue_date', label: 'issue_date', value: '2025-03-14', conf: 0.98 },
+      { id: 'customer', label: 'customer', value: 'Meridian Health Group', conf: 0.96 },
+      { id: 'delivery_site', label: 'delivery_site', value: 'Meridian Clinic — Sandyford', conf: 0.91 },
+      { id: 'total', label: 'total_due', value: '14,751.92 EUR', conf: 0.97 },
+      { id: 'discount_pct', label: 'discount_pct', value: '4%', conf: 0.62, check: 'Written as a percent, applied as a flat 496.00 — which is right?', actions: ['Keep 4%', 'Keep 496.00'] },
+      { id: 'terms', label: 'payment_terms', value: 'net_45', conf: 0.94 },
+      { id: 'vat_id', label: 'vat_id', value: 'IE4839201K', conf: 0.88 }
+    ]
+  },
+  {
+    id: 'msa', name: 'meridian-northwind-MSA-signed.pdf', kind: 'Contract', icon: 'ph ph-scroll',
+    label: 'Supply MSA', meta: 'PDF · 14 pages · scanned, OCR applied · read in 6.2s',
+    schemaNote: '19 fields inferred; 6 of them are new to this dataset',
+    newFields: ['auto_renew', 'notice_period_days', 'liability_cap_basis'],
+    lines: [
+      { k: 'h', segs: [['MASTER SUPPLY AGREEMENT', null]] },
+      { k: 'small', segs: [['between Northwind Supply Co. and Meridian Health Group', null]] },
+      { k: 'gap', segs: [['', null]] },
+      { k: 'row', segs: [['3.2  Term and Renewal', null]] },
+      { k: 'p', segs: [['This Agreement commences on ', null], ['1 April 2025', 'effective_date'], [' and continues for ', null], ['twelve (12) months', 'term_months'], [', ', null], ['renewing automatically', 'auto_renew'], [' for successive twelve-month terms unless either party gives ', null], ['ninety (90) days', 'notice_period_days'], [' written notice prior to the end of the then-current term.', null]] },
+      { k: 'gap', segs: [['', null]] },
+      { k: 'row', segs: [['5.1  Pricing', null]] },
+      { k: 'p', segs: [['Unit prices are held for the initial term. Thereafter Northwind may adjust prices once per term, capped at ', null], ['CPI + 2%', 'price_escalator'], ['.', null]] },
+      { k: 'gap', segs: [['', null]] },
+      { k: 'row', segs: [['7.1  Limitation of Liability', null]] },
+      { k: 'p', segs: [['Neither party\u2019s aggregate liability shall exceed ', null], ['the fees paid in the twelve months preceding the claim', 'liability_cap_basis'], [', save for fraud or wilful misconduct.', null]] },
+      { k: 'gap', segs: [['', null]] },
+      { k: 'row', segs: [['9.4  Governing Law', null]] },
+      { k: 'p', segs: [['This Agreement is governed by the laws of ', null], ['Ireland', 'governing_law'], [' and the parties submit to the exclusive jurisdiction of its courts.', null]] }
+    ],
+    fields: [
+      { id: 'effective_date', label: 'effective_date', value: '2025-04-01', conf: 0.97 },
+      { id: 'term_months', label: 'term_months', value: '12', conf: 0.95 },
+      { id: 'auto_renew', label: 'auto_renew', value: 'true', conf: 0.93 },
+      { id: 'notice_period_days', label: 'notice_period_days', value: '90', conf: 0.94 },
+      { id: 'price_escalator', label: 'price_escalator', value: 'CPI + 2%', conf: 0.71, check: 'Cap is conditional on “once per term” — kept as text, not a number.', actions: ['Keep as text'] },
+      { id: 'liability_cap_basis', label: 'liability_cap_basis', value: 'trailing_12mo_fees', conf: 0.86 },
+      { id: 'governing_law', label: 'governing_law', value: 'IE', conf: 0.99 }
+    ]
+  }
+];
+
+const LAB_DOC = {
+  id: 'lab', name: 'meridian-lab-panel-scan.tiff', kind: 'Lab record', icon: 'ph ph-flask',
+  label: 'Lab panel scan', meta: 'TIFF · 2 pages · 118 dpi · OCR returned 4 characters',
+  schemaNote: 'Nothing to infer from yet', newFields: [], lines: [], fields: []
+};
+
+const PENDING = [
+  { id: 'lab', name: 'meridian-lab-panel-scan.tiff', kind: 'Lab record', icon: 'ph ph-flask', sub: 'Scanned, no text layer — OCR running' },
+  { id: 'thread', name: 're-late-delivery-thread.eml', kind: 'Email thread', icon: 'ph ph-envelope-simple', sub: '9 messages · resolving entities against the dataset' }
+];
+
+const GREETING = { role: 'bot', text: 'I have read 12 of your 14 documents. Ask in plain words — I answer only from fields I can point at.' };
+
+const SUGGESTIONS = [
+  { id: 's1', text: 'What are the payment terms on invoice 2291?', source: '1 doc', score: 0.98, answer: 'Net 45 days from the 14 March 2025 issue date — so due 28 April 2025.', cites: [['inv', 'terms', 'Invoice 2291 · payment_terms'], ['inv', 'issue_date', 'Invoice 2291 · issue_date']] },
+  { id: 's2', text: 'Does the Meridian supply agreement renew automatically?', source: '1 doc', score: 0.95, answer: 'Yes. It auto-renews in twelve-month terms unless either side gives 90 days written notice — next cut-off is 1 January 2026.', cites: [['msa', 'auto_renew', 'Supply MSA §3.2 · auto_renew'], ['msa', 'notice_period_days', 'Supply MSA §3.2 · notice_period_days']] },
+  { id: 's3', text: 'Is the discount on 2291 consistent with the contracted price cap?', source: '2 docs', score: 0.74, answer: 'Unclear — the invoice discount is recorded as 4% but applied as a flat 496.00, and the MSA caps increases rather than discounts. One field needs confirming first.', cites: [['inv', 'discount_pct', 'Invoice 2291 · discount_pct'], ['msa', 'price_escalator', 'Supply MSA §5.1 · price_escalator']] },
+  { id: 's4', text: 'What is the liability cap, and on what basis?', source: '1 doc', score: 0.89, answer: 'Capped at the fees paid in the trailing twelve months, with fraud and wilful misconduct carved out.', cites: [['msa', 'liability_cap_basis', 'Supply MSA §7.1 · liability_cap_basis']] },
+  { id: 's5', text: 'Which VAT ID does Northwind bill under?', source: '1 doc', score: 0.86, answer: 'IE4839201K, printed in the invoice footer alongside PO reference MHG-PO-8842.', cites: [['inv', 'vat_id', 'Invoice 2291 · vat_id']] },
+  { id: 's6', text: 'Where is delivery actually going, versus who is billed?', source: '1 doc', score: 0.8, answer: 'Billed to Meridian Health Group in Dublin 2; delivered to the Sandyford clinic.', cites: [['inv', 'delivery_site', 'Invoice 2291 · delivery_site'], ['inv', 'customer', 'Invoice 2291 · customer']] }
+];
+
+const SCENARIOS = [
+  { id: 'ok', label: 'Healthy', note: 'Two documents read, two still reading', screen: 'ingest' },
+  { id: 'upload', label: 'Upload failed', note: 'Connection dropped mid-transfer', screen: 'ingest' },
+  { id: 'reject', label: 'Files rejected', note: 'Too large, encrypted, corrupt, duplicate', screen: 'ingest' },
+  { id: 'stalled', label: 'Processing stalled', note: 'Worker queue backed up, no progress', screen: 'ingest' },
+  { id: 'blank', label: 'Nothing extractable', note: 'Scan too poor for OCR', screen: 'review' },
+  { id: 'partial', label: 'Partial extraction', note: 'Model stopped at page 9 of 14', screen: 'review' },
+  { id: 'conflict', label: 'Sources disagree', note: 'Invoice and contract give different values', screen: 'review' },
+  { id: 'denied', label: 'No access to source', note: 'Fields visible, document restricted', screen: 'review' },
+  { id: 'model', label: 'Model unavailable', note: 'Timeout, then rate limit', screen: 'ask' },
+  { id: 'nocite', label: 'Refused to guess', note: 'No field supports an answer', screen: 'ask' },
+  { id: 'ambiguous', label: 'Ambiguous question', note: 'Two entities match “Meridian”', screen: 'ask' },
+  { id: 'offline', label: 'Offline', note: 'Reads from cache, writes queued', screen: 'ingest' },
+  { id: 'quota', label: 'Quota exhausted', note: 'Page allowance spent for the month', screen: 'ingest' },
+  { id: 'session', label: 'Session expired', note: 'Signed out mid-review', screen: 'review' },
+  { id: '404', label: 'Page not found', note: 'Deleted record, dead link', screen: 'notfound' }
+];
+
+const REJECTS = {
+  upload: [{
+    name: 'q3-supplier-statements.pdf', kind: 'Upload failed', icon: 'ph ph-cloud-warning',
+    sub: 'Connection dropped at 41% — 8.2 MB of 20.1 MB sent. Nothing was stored.',
+    actions: [['Resume upload', 'btn btn-primary'], ['Discard', 'btn btn-ghost']]
+  }],
+  reject: [
+    { name: 'archive-2019-2024.zip', kind: 'Too large', icon: 'ph ph-file-x', sub: '412 MB exceeds the 200 MB per-file limit — upload the folder instead and we read each file separately.', actions: [['Upload as folder', 'btn btn-primary'], ['Remove', 'btn btn-ghost']] },
+    { name: 'board-pack-locked.pdf', kind: 'Encrypted', icon: 'ph ph-lock-simple', sub: 'Password-protected. We never store the password — it is used once to open the file.', actions: [['Enter password', 'btn btn-primary'], ['Remove', 'btn btn-ghost']] },
+    { name: 'scan-0043.pdf', kind: 'Corrupt', icon: 'ph ph-file-x', sub: 'Truncated at byte 118,433 of an expected 2.1 MB — the export was interrupted. Re-export and drop it again.', actions: [['Re-upload', 'btn btn-secondary'], ['Remove', 'btn btn-ghost']] },
+    { name: 'northwind-invoice-2291.pdf', kind: 'Duplicate', icon: 'ph ph-copy', sub: 'Same checksum as a document read on 4 September. The earlier copy and its 11 fields were kept.', actions: [['Replace existing', 'btn btn-secondary'], ['Keep existing', 'btn btn-ghost']] }
+  ]
+};
+
+const BANNERS = {
+  offline: { icon: 'ph ph-wifi-slash', title: 'You are offline.', text: 'Showing the 12 documents already read. Uploads and field confirmations are queued and will send when the connection returns.', cta: 'Retry now' },
+  quota: { icon: 'ph ph-gauge', title: 'Page allowance spent.', text: '5,000 of 5,000 pages read this month. Documents already in the corpus stay queryable; new ones wait in the queue.', cta: 'Add pages' },
+  stalled: { icon: 'ph ph-hourglass-high', title: 'Processing is stalled.', text: 'No worker has picked up the queue in 14 minutes. Two documents are waiting; nothing has been lost.', cta: 'Check status' },
+  denied: { icon: 'ph ph-eye-slash', title: 'Source document restricted.', text: 'You can see the extracted fields but not the original file — it sits in a folder shared only with the finance group.', cta: 'Request access' }
+};
+
+class Component extends DCLogic {
+  state = {
+    screen: 'ingest', docId: 'inv', active: null, hover: null, scen: 'ok',
+    progress: { lab: 0.34, thread: 0.62 }, confirmed: {}, resolved: {},
+    draft: '', answer: null, askErr: null, askBusy: false, askPct: 0,
+    statesOpen: false, sessionOpen: false,
+    chatOpen: false, chatDraft: '', chatBusy: false, chatPct: 0, chatBadge: true,
+    chatMsgs: [GREETING]
+  };
+
+  componentDidMount() {
+    this.timer = setInterval(() => {
+      if (this.state.scen === 'stalled' || this.state.scen === 'offline') return;
+      this.setState(s => ({ progress: {
+        lab: Math.min(0.97, s.progress.lab + 0.03),
+        thread: Math.min(0.97, s.progress.thread + 0.02)
+      } }));
+    }, 900);
+  }
+  componentWillUnmount() { clearInterval(this.timer); clearTimeout(this.t1); clearTimeout(this.t2); }
+
+  doc() {
+    if (this.state.docId === 'lab') return LAB_DOC;
+    return DOCS.find(d => d.id === this.state.docId) || DOCS[0];
+  }
+  go(screen) { this.setState({ screen }); }
+  openDoc(id, field) { this.setState({ screen: 'review', docId: id, active: field || null }); }
+
+  setScenario(id) {
+    const sc = SCENARIOS.find(s => s.id === id);
+    this.setState({
+      scen: id, screen: sc.screen, statesOpen: false, sessionOpen: id === 'session',
+      active: null, answer: null, askBusy: false, askErr: null, draft: '',
+      docId: id === 'blank' ? 'lab' : id === 'partial' || id === 'conflict' ? 'msa' : 'inv',
+      chatDraft: '', chatBusy: false,
+      chatMsgs: id === 'model'
+        ? [GREETING,
+           { role: 'user', text: 'Summarise every renewal date we have.' },
+           { role: 'err', title: 'The model did not respond', text: 'Timed out after 30s on a 14-page context. Your question is saved — retrying does not re-read the documents.', actions: [['Retry', 'btn btn-secondary'], ['Narrow to 1 doc', 'btn btn-ghost']] }]
+        : id === 'offline'
+          ? [GREETING, { role: 'err', title: 'No connection', text: 'Six earlier answers are readable from cache. New questions are queued until you are back online.', actions: [['Retry', 'btn btn-secondary']] }]
+          : id === 'quota'
+            ? [GREETING, { role: 'bot', text: 'Reading is paused for the month, so I answer only from the 214 fields already extracted. Two documents have none yet.' }]
+            : [GREETING]
+    });
+  }
+
+  navBtn(screen) {
+    const on = this.state.screen === screen;
+    return `display:grid;place-items:center;width:38px;height:38px;border-radius:var(--radius-md);cursor:pointer;border:1px solid ${on ? 'var(--color-accent-700)' : 'transparent'};background:${on ? 'var(--color-accent-900)' : 'transparent'};color:${on ? 'var(--color-accent-200)' : 'var(--color-neutral-500)'}`;
+  }
+
+  lineStyle(k) {
+    const row = 'display:flex;align-items:baseline;gap:var(--space-6);';
+    const base = row + 'text-wrap:pretty;';
+    if (k === 'h') return base + 'font-family:var(--font-heading);font-size:17px;letter-spacing:0.02em;margin-bottom:4px';
+    if (k === 'small') return base + 'font-size:11.5px;color:var(--color-neutral-500);line-height:1.6';
+    if (k === 'row') return base + 'font-family:var(--font-heading);font-size:14.5px;margin-bottom:6px';
+    if (k === 'li') return row + 'font-size:12.5px;color:var(--color-neutral-300);line-height:1.9;border-bottom:1px solid var(--color-neutral-900);padding-bottom:2px';
+    if (k === 'sum') return row + 'font-size:12.5px;color:var(--color-neutral-300);line-height:1.9';
+    if (k === 'gap') return 'height:14px';
+    return base + 'font-size:13.5px;line-height:1.75;color:var(--color-neutral-200);margin-bottom:6px';
+  }
+
+  segStyle(fid) {
+    if (!fid) return '';
+    const lit = this.state.active === fid || this.state.hover === fid;
+    const prov = this.props.showProvenance ?? true;
+    if (lit) return 'cursor:pointer;border-radius:3px;padding:1px 3px;margin:0 -2px;background:var(--color-accent-800);color:var(--color-accent-100);box-shadow:inset 0 -1px 0 var(--color-accent);animation:sift-pulse 700ms ease-out';
+    return `cursor:pointer;border-radius:3px;padding:1px 3px;margin:0 -2px;${prov ? 'background:rgba(145,132,217,0.10);box-shadow:inset 0 -1px 0 var(--color-accent-700);' : ''}`;
+  }
+
+  answerFor(text) {
+    const t = (text || '').trim().toLowerCase();
+    if (!t) return null;
+    const words = t.split(/\W+/).filter(w => w.length > 3);
+    if (!words.length) return null;
+    return SUGGESTIONS.find(q => words.filter(w => q.text.toLowerCase().includes(w)).length >= Math.max(1, Math.ceil(words.length * 0.4))) || null;
+  }
+
+  runAsk(text) {
+    const scen = this.state.scen;
+    this.setState({ draft: text, answer: null, askErr: null, askBusy: true, askPct: 8 });
+    clearTimeout(this.t1); clearTimeout(this.t2);
+    this.t1 = setTimeout(() => this.setState({ askPct: 64 }), 350);
+    this.t2 = setTimeout(() => {
+      if (scen === 'model') return this.setState({ askBusy: false, askErr: 'timeout' });
+      if (scen === 'offline') return this.setState({ askBusy: false, askErr: 'offline' });
+      if (scen === 'ambiguous') return this.setState({ askBusy: false, askErr: 'ambiguous' });
+      if (scen === 'nocite') return this.setState({ askBusy: false, askErr: 'nocite' });
+      const hit = this.answerFor(text);
+      this.setState({ askBusy: false, answer: hit, askErr: hit ? null : 'nofield', askPct: 100 });
+    }, 900);
+  }
+
+  chatSay(text) {
+    const scen = this.state.scen;
+    const push = m => this.setState(s => ({ chatMsgs: s.chatMsgs.concat([m]) }));
+    push({ role: 'user', text });
+    this.setState({ chatDraft: '', chatBusy: true, chatPct: 20 });
+    clearTimeout(this.t1);
+    this.t1 = setTimeout(() => {
+      this.setState({ chatBusy: false });
+      if (scen === 'offline') return push({ role: 'err', title: 'No connection', text: 'Your question is queued. Cached answers for the 12 read documents still work — this one needs the model.', actions: [['Retry', 'btn btn-secondary']] });
+      if (scen === 'model') return push({ role: 'err', title: 'Rate limited (429)', text: 'The model is at capacity for your workspace. Queued — retrying in about 12 seconds. Nothing is lost.', actions: [['Retry now', 'btn btn-secondary'], ['Cancel', 'btn btn-ghost']] });
+      if (scen === 'quota') return push({ role: 'err', title: 'Quota exhausted', text: 'Reading is paused for the month, so I can only answer from fields already extracted — 2 documents have none yet.', actions: [['Add pages', 'btn btn-secondary']] });
+      const hit = this.answerFor(text);
+      if (!hit) return push({ role: 'err', title: 'No field covers that', text: 'The documents may still say it — extraction never pulled it out. I can re-read the corpus for this one field.', actions: [['Extract it', 'btn btn-secondary']] });
+      push({ role: 'bot', text: hit.answer, cites: hit.cites });
+    }, 1100);
+  }
+
+  renderVals() {
+    const s = this.state, scen = s.scen, doc = this.doc();
+    const setHover = h => this.setState({ hover: h });
+    const nav = [['ingest', 'ph ph-tray', 'Ingest'], ['review', 'ph ph-columns', 'Review'], ['ask', 'ph ph-chat-teardrop-text', 'Ask']];
+    const btn = (label, cls, run) => ({ label, cls, run });
+
+    const bannerKey = BANNERS[scen] ? scen : null;
+    const b = bannerKey ? BANNERS[bannerKey] : null;
+
+    const anyBusy = !(scen === 'stalled' || scen === 'quota');
+    const agg = Math.round(((s.progress.lab + s.progress.thread) / 2) * 100);
+
+    const queue = DOCS.map(d => ({
+      name: d.name, kind: d.kind, icon: d.icon, cursor: 'pointer',
+      iconStyle: 'font-size:18px;color:var(--color-accent-300)',
+      sub: d.meta.replace(/ · read in .*/, ''), subStyle: 'font-size:12px;color:var(--color-neutral-500)',
+      tagClass: 'tag tag-accent', done: true, busy: false, hasActions: false, actions: [],
+      fieldCount: (d.fields.length + (d.id === 'inv' ? 3 : 12)) + ' fields extracted',
+      flagLabel: d.fields.some(f => f.check && !s.confirmed[f.id]) ? '1 field to confirm' : 'clean',
+      rowStyle: 'padding:var(--space-4) var(--space-6);border:1px solid var(--color-neutral-900);border-radius:var(--radius-md);background:var(--color-surface)',
+      open: () => this.openDoc(d.id)
+    }));
+
+    const pending = PENDING.map(p => {
+      const pct = Math.round((s.progress[p.id] || 0) * 100);
+      const stalled = scen === 'stalled', paused = scen === 'quota' || scen === 'offline';
+      return {
+        name: p.name, kind: p.kind, icon: p.icon, cursor: 'default',
+        iconStyle: 'font-size:18px;color:var(--color-neutral-500)',
+        sub: stalled ? 'Queued 14 minutes ago — no worker has claimed it' : paused ? 'Waiting — reading is paused' : p.sub,
+        subStyle: 'font-size:12px;color:var(--color-neutral-500)',
+        tagClass: 'tag tag-neutral', done: false, busy: true,
+        stage: stalled ? 'stalled at ' + pct + '%' : paused ? 'paused at ' + pct + '%' : pct + '% · inferring fields',
+        barStyle: `height:100%;width:${pct}%;background:${stalled || paused ? 'var(--color-neutral-600)' : 'var(--color-accent)'};transition:width 800ms linear`,
+        fieldCount: '', flagLabel: '',
+        hasActions: stalled, actions: stalled ? [btn('Requeue', 'btn btn-secondary', () => this.setScenario('ok')), btn('View worker log', 'btn btn-ghost', () => {})] : [],
+        rowStyle: 'padding:var(--space-4) var(--space-6);border:1px solid var(--color-neutral-900);border-radius:var(--radius-md);background:var(--color-surface);opacity:0.72',
+        open: () => {}
+      };
+    });
+
+    const failed = (REJECTS[scen] || []).map(r => ({
+      name: r.name, kind: r.kind, icon: r.icon, cursor: 'default',
+      iconStyle: 'font-size:18px;color:var(--color-accent-300)',
+      sub: r.sub, subStyle: 'font-size:12px;color:var(--color-neutral-400);text-wrap:pretty',
+      tagClass: 'tag tag-outline', done: false, busy: false,
+      hasActions: true, actions: r.actions.map(([l, c]) => btn(l, c, () => this.setScenario('ok'))),
+      stage: '', barStyle: '', fieldCount: '', flagLabel: '',
+      rowStyle: 'padding:var(--space-4) var(--space-6);border:1px solid var(--color-accent-800);border-radius:var(--radius-md);background:rgba(145,132,217,0.05)',
+      open: () => {}
+    }));
+
+    // review-side states
+    const blank = scen === 'blank';
+    const partial = scen === 'partial';
+    const denied = scen === 'denied';
+    let fields = doc.fields.slice();
+    if (partial) fields = fields.slice(0, 4);
+    if (blank) fields = [];
+    if (scen === 'conflict') fields = fields.map(f => f.id === 'price_escalator'
+      ? { id: f.id, label: f.label, value: 'CPI + 2%  ·  invoice says 4% flat', conf: 0.48, conflict: true, check: 'Invoice 2291 and MSA §5.1 disagree. Pick the record of truth — the dataset stores one value.', actions: ['Trust contract', 'Trust invoice', 'Keep both'] }
+      : f);
+
+    const fieldRows = fields.map(f => {
+      const lit = s.active === f.id || s.hover === f.id;
+      const needs = !!f.check && !s.confirmed[f.id];
+      const disp = this.props.confidence ?? 'bar';
+      const c = s.confirmed[f.id] ? 0.99 : f.conf;
+      const hue = c >= 0.9 ? 'var(--color-accent)' : c >= 0.8 ? 'var(--color-accent-600)' : 'var(--color-neutral-500)';
+      return {
+        label: f.label, value: f.value, needsCheck: needs, checkNote: f.check || '',
+        valueStyle: 'flex:1;min-width:0;font-size:14px;text-wrap:pretty;' + (f.conflict ? 'color:var(--color-accent-200)' : ''),
+        checkActions: (f.actions || ['Confirm']).map(l => btn(l, 'btn btn-secondary', () => this.setState(st => ({ confirmed: Object.assign({}, st.confirmed, { [f.id]: true }) })))),
+        showBar: disp === 'bar', showPct: disp === 'percent', pct: Math.round(c * 100) + '%',
+        pctStyle: `font-size:11px;color:${c >= 0.9 ? 'var(--color-accent-300)' : 'var(--color-neutral-500)'}`,
+        confStyle: `display:block;height:100%;width:${Math.round(c * 100)}%;background:${hue}`,
+        style: `padding:var(--space-3) var(--space-4);border-radius:var(--radius-sm);cursor:pointer;border-left:2px solid ${lit ? 'var(--color-accent)' : 'transparent'};background:${lit ? 'var(--color-accent-900)' : needs ? 'rgba(145,132,217,0.05)' : 'transparent'}`,
+        click: () => this.setState({ active: s.active === f.id ? null : f.id }),
+        enter: () => setHover(f.id), leave: () => setHover(null)
+      };
+    });
+
+    const docLines = doc.lines.map(l => ({
+      style: this.lineStyle(l.k), leftStyle: 'flex:1;min-width:0',
+      hasAmt: !!l.amt, amt: l.amt || '',
+      amtStyle: 'flex:0 0 auto;font-variant-numeric:tabular-nums;font-size:12.5px;color:var(--color-neutral-200)',
+      segs: l.segs.map(([text, fid]) => ({
+        text, style: this.segStyle(fid),
+        click: fid ? () => this.setState({ active: s.active === fid ? null : fid }) : undefined,
+        enter: fid ? () => setHover(fid) : undefined,
+        leave: fid ? () => setHover(null) : undefined
+      }))
+    }));
+
+    const notices = {
+      partial: { icon: 'ph ph-warning-octagon', title: 'Extraction stopped at page 9 of 14', text: 'The model returned malformed JSON on page 9 and the run halted. 4 of 19 fields were captured; the rest are untouched, not wrong.', actions: [btn('Resume from page 9', 'btn btn-primary', () => this.setScenario('ok')), btn('See raw output', 'btn btn-ghost', () => {})] },
+      conflict: { icon: 'ph ph-git-diff', title: 'Two documents disagree on price_escalator', text: 'A value only enters the dataset once. Until you pick, queries that touch it return both readings with a caveat.', actions: [btn('Compare side by side', 'btn btn-secondary', () => {}), btn('Ask about it', 'btn btn-ghost', () => this.go('ask'))] },
+      denied: { icon: 'ph ph-eye-slash', title: 'Source hidden', text: 'These fields came from a document you cannot open, so provenance highlighting is unavailable. The values were extracted before the folder was restricted.', actions: [btn('Request access', 'btn btn-secondary', () => {})] }
+    };
+    const notice = notices[scen] || null;
+
+    const n = this.props.suggestionCount ?? 6;
+    const suggestions = SUGGESTIONS.slice().sort((a, b2) => b2.score - a.score).slice(0, n).map((q, i) => ({
+      rank: String(i + 1).padStart(2, '0'), text: q.text, source: q.source,
+      barStyle: `display:block;height:100%;width:${Math.round(q.score * 100)}%;background:${q.score >= 0.85 ? 'var(--color-accent)' : 'var(--color-accent-600)'}`,
+      style: 'display:flex;align-items:center;gap:var(--space-4);text-align:left;width:100%;padding:var(--space-4) var(--space-6);border:1px solid var(--color-neutral-900);border-radius:var(--radius-md);background:var(--color-surface);color:var(--color-text);font-family:var(--font-body);cursor:pointer',
+      ask: () => this.runAsk(q.text)
+    }));
+
+    const ASK_ERRS = {
+      timeout: { icon: 'ph ph-clock-countdown', title: 'The model did not answer in time', text: 'Timed out after 30 seconds while reading 14 documents. Nothing was charged and your question is kept — retrying reuses the extracted fields.', code: 'gateway_timeout · request 8f2c-4471 · 30,012ms', actions: [btn('Retry', 'btn btn-primary', () => this.setState({ askErr: 'rate' })), btn('Ask one document instead', 'btn btn-ghost', () => this.openDoc('msa'))] },
+      rate: { icon: 'ph ph-traffic-cone', title: 'Rate limited — queued', text: 'Your workspace is at capacity. This question is in line and will run automatically in about 12 seconds.', code: '429 too_many_requests · retry_after=12s', actions: [btn('Keep waiting', 'btn btn-secondary', () => this.setScenario('ok')), btn('Cancel', 'btn btn-ghost', () => this.setState({ askErr: null }))] },
+      nocite: { icon: 'ph ph-shield-check', title: 'I will not answer this one', text: 'The corpus has nothing that supports an answer, and guessing from a contract is worse than silence. Extraction can look for it specifically.', code: '', actions: [btn('Extract this field from all 12 documents', 'btn btn-primary', () => this.setScenario('ok')), btn('Rephrase', 'btn btn-ghost', () => this.setState({ askErr: null })) ] },
+      nofield: { icon: 'ph ph-magnifying-glass-minus', title: 'No field covers that yet', text: 'The documents may still say it — extraction just never pulled it out. Re-read the corpus for this and it becomes a column.', code: '', actions: [btn('Extract it from all 12 documents', 'btn btn-primary', () => this.setState({ askErr: null, screen: 'ingest' })), btn('Clear', 'btn btn-ghost', () => this.setState({ askErr: null }))] },
+      ambiguous: { icon: 'ph ph-signpost', title: 'Which Meridian do you mean?', text: 'Two entities in the corpus resolve to that name and their records do not agree. Pick one and I will answer against it.', code: '', actions: [btn('Meridian Health Group (billed)', 'btn btn-secondary', () => this.runAsk('Which VAT ID does Northwind bill under?')), btn('Meridian Clinic — Sandyford (delivery)', 'btn btn-secondary', () => this.runAsk('Where is delivery actually going, versus who is billed?'))] },
+      offline: { icon: 'ph ph-wifi-slash', title: 'Offline — cached answers only', text: 'Six earlier answers are readable from cache. New questions need the model, so this one is queued.', code: 'net::ERR_INTERNET_DISCONNECTED', actions: [btn('Retry', 'btn btn-secondary', () => this.setScenario('ok')), btn('Show cached answers', 'btn btn-ghost', () => this.setState({ askErr: null }))] }
+    };
+    const ae = s.askErr ? ASK_ERRS[s.askErr] : null;
+    const ans = s.answer;
+
+    const chatMsgs = s.chatMsgs.map(m => {
+      const err = m.role === 'err', me = m.role === 'user';
+      return {
+        wrapStyle: 'display:flex;justify-content:' + (me ? 'flex-end' : 'flex-start'),
+        bubbleStyle: 'max-width:86%;padding:var(--space-3) var(--space-4);border-radius:var(--radius-md);'
+          + (me ? 'background:var(--color-accent-900);border:1px solid var(--color-accent-800);color:var(--color-accent-100)'
+            : err ? 'background:rgba(145,132,217,0.06);border:1px solid var(--color-accent-800)'
+              : 'background:var(--color-bg);border:1px solid var(--color-neutral-900)'),
+        hasTitle: !!m.title, title: m.title || '', text: m.text,
+        hasCites: !!m.cites, cites: (m.cites || []).map(([d2, f2, label]) => ({ label, go: () => this.openDoc(d2, f2) })),
+        hasActions: !!m.actions, actions: (m.actions || []).map(([l, c]) => btn(l, c, () => {
+          if (l === 'Retry' || l === 'Retry now') { this.setScenario('ok'); this.chatSay('Summarise every renewal date we have.'); }
+          else this.setState({ scen: 'ok' });
+        }))
+      };
+    });
+
+    const chatBroken = scen === 'offline' || scen === 'model' || scen === 'quota';
+
+    return {
+      navItems: nav.map(([k, icon, label]) => ({ icon, label, style: this.navBtn(k), go: () => this.go(k) })),
+      isIngest: s.screen === 'ingest', isReview: s.screen === 'review', isAsk: s.screen === 'ask', isNotFound: s.screen === 'notfound',
+      goIngest: () => this.go('ingest'), goAsk: () => this.go('ask'),
+
+      topBarStyle: anyBusy
+        ? `height:100%;width:${agg}%;background:linear-gradient(90deg,var(--color-accent-700),var(--color-accent));transition:width 800ms linear`
+        : 'height:100%;width:0',
+
+      hasBanner: !!b,
+      bannerIcon: b ? b.icon : '', bannerTitle: b ? b.title : '', bannerText: b ? b.text : '', bannerCta: b ? b.cta : '',
+      bannerStyle: 'display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3) var(--space-8);background:rgba(145,132,217,0.07);border-bottom:1px solid var(--color-accent-800);color:var(--color-accent-200)',
+      bannerAction: () => this.setScenario('ok'),
+
+      queue: failed.concat(queue, pending),
+      readyLabel: scen === 'stalled' ? '2 ready · 2 stalled' : scen === 'quota' ? '2 ready · 2 paused' : DOCS.length + ' ready · ' + PENDING.length + ' reading',
+      dropStyle: 'border:1px dashed ' + (scen === 'offline' || scen === 'quota' ? 'var(--color-neutral-800)' : 'var(--color-accent-700)') + ';border-radius:var(--radius-lg);padding:var(--space-8);display:flex;flex-direction:column;align-items:center;gap:var(--space-3);cursor:pointer;opacity:' + (scen === 'offline' || scen === 'quota' ? '0.55' : '1') + ';background:radial-gradient(120% 140% at 50% 0%,rgba(145,132,217,0.09),transparent 70%)',
+      dropNote: scen === 'offline' ? 'Offline — dropped files are held on this device and upload when you reconnect'
+        : scen === 'quota' ? 'Reading paused until your page allowance resets on 1 October'
+        : 'No schema needed — fields are inferred per document and merged into the dataset',
+      addDoc: () => this.setState({ screen: 'review', docId: 'msa' }),
+
+      docTabs: (blank ? DOCS.concat([LAB_DOC]) : DOCS).map(d => ({
+        label: d.label, go: () => this.setState({ docId: d.id, active: null }),
+        style: `padding:5px 12px;border-radius:var(--radius-sm);border:0;cursor:pointer;font-family:var(--font-heading);font-size:13px;background:${s.docId === d.id ? 'var(--color-accent-900)' : 'transparent'};color:${s.docId === d.id ? 'var(--color-accent-200)' : 'var(--color-neutral-500)'}`
+      })),
+      reviewMeta: blank ? 'TIFF · 2 pages · 118 dpi · OCR returned 4 characters' : denied ? 'Source restricted · fields cached 4 Sept' : doc.meta,
+      schemaNote: blank ? 'Nothing to infer from yet' : partial ? '4 of 19 fields captured before the run halted' : doc.schemaNote,
+      newFields: (blank ? [] : doc.newFields).map(label => ({ label })),
+
+      docReadable: !blank && !denied, docUnreadable: blank || denied,
+      unreadableTitle: denied ? 'You cannot open this document' : 'No text could be recovered',
+      unreadableText: denied
+        ? 'The file lives in a restricted folder. Extracted values are still shown on the right, but there is nothing to highlight them against.'
+        : 'The scan is 118 dpi with heavy skew; OCR returned 4 characters across 2 pages. Re-scan at 300 dpi or key the values in by hand — we will not guess at an unreadable page.',
+      docLines, fieldRows,
+      docTruncated: partial, truncatedNote: 'Pages 9–14 were not parsed. The document text ends here because the run halted, not because the file does.',
+      skeletonRows: partial ? [0, 1, 2].map(i => ({ style: 'flex:1;height:8px;border-radius:2px;background:var(--color-neutral-900);max-width:' + (70 - i * 12) + '%' })) : [],
+
+      hasExtractionNotice: !!notice,
+      noticeIcon: notice ? notice.icon : '', noticeTitle: notice ? notice.title : '', noticeText: notice ? notice.text : '',
+      noticeActions: notice ? notice.actions : [],
+      noticeStyle: 'border:1px solid var(--color-accent-800);border-radius:var(--radius-md);background:rgba(145,132,217,0.06);padding:var(--space-4);margin-bottom:var(--space-4)',
+      clearActive: () => this.setState({ active: null, hover: null }),
+
+      askHeading: 'Twelve documents, no shared schema. Here is what they can answer.',
+      draft: s.draft,
+      onDraft: e => this.setState({ draft: e.target.value }),
+      onKey: e => { if (e.key === 'Enter') this.runAsk(s.draft); },
+      submit: () => this.runAsk(s.draft),
+      askBusy: s.askBusy, askBusyStage: 'Matching your question against 214 extracted fields',
+      askBusyPct: s.askPct + '%',
+      askBusyBar: `height:100%;width:${s.askPct}%;background:var(--color-accent);transition:width 400ms ease`,
+      hasAskError: !!ae,
+      askErrIcon: ae ? ae.icon : '', askErrTitle: ae ? ae.title : '', askErrText: ae ? ae.text : '',
+      askErrActions: ae ? ae.actions : [], askErrDetail: !!(ae && ae.code), askErrCode: ae ? ae.code : '',
+      hasAnswer: !!ans, answerQuestion: ans ? ans.text : '', answerText: ans ? ans.answer : '',
+      answerCaveat: !!(ans && scen === 'conflict'),
+      answerCaveatText: 'Two documents disagree on price_escalator, so this answer holds only if the contract is the record of truth.',
+      citations: ans ? ans.cites.map(([docId, field, label]) => ({ label, go: () => this.openDoc(docId, field) })) : [],
+      suggestions,
+
+      statesOpen: s.statesOpen,
+      statesBtnStyle: `display:grid;place-items:center;width:38px;height:38px;border-radius:var(--radius-md);cursor:pointer;border:1px solid ${s.statesOpen ? 'var(--color-accent-700)' : 'transparent'};background:${s.statesOpen ? 'var(--color-accent-900)' : 'transparent'};color:${s.statesOpen ? 'var(--color-accent-200)' : 'var(--color-neutral-600)'}`,
+      toggleStates: () => this.setState({ statesOpen: !s.statesOpen }),
+      scenarios: SCENARIOS.map(sc => ({
+        label: sc.label, note: sc.note, run: () => this.setScenario(sc.id),
+        style: `display:flex;flex-direction:column;gap:1px;text-align:left;padding:var(--space-2) var(--space-3);border-radius:var(--radius-sm);cursor:pointer;font-family:var(--font-body);border:1px solid ${scen === sc.id ? 'var(--color-accent-700)' : 'transparent'};background:${scen === sc.id ? 'var(--color-accent-900)' : 'transparent'};color:var(--color-text)`
+      })),
+
+      chatOpen: s.chatOpen, chatClosed: !s.chatOpen, chatBadge: s.chatBadge,
+      toggleChat: () => this.setState({ chatOpen: !s.chatOpen, chatBadge: false }),
+      chatDot: chatBroken ? 'var(--color-neutral-600)' : 'var(--color-accent)',
+      chatStatus: scen === 'offline' ? 'Offline — cached answers only' : scen === 'model' ? 'Model at capacity — retrying' : scen === 'quota' ? 'Reading paused · 12 of 14 documents' : '12 documents · answers carry citations',
+      chatBusy: s.chatBusy, chatTyping: s.chatBusy,
+      chatBarStyle: `height:100%;width:40%;background:var(--color-accent);animation:sift-slide 1.1s linear infinite`,
+      chatMsgs,
+      chatHasChips: !s.chatBusy,
+      chatChips: SUGGESTIONS.slice(0, 2).map(q => ({ label: q.text, run: () => this.chatSay(q.text) })),
+      chatDraft: s.chatDraft, chatPlaceholder: scen === 'offline' ? 'Offline — questions are queued' : 'Ask about any document…',
+      chatDisabled: false,
+      onChatDraft: e => this.setState({ chatDraft: e.target.value }),
+      onChatKey: e => { if (e.key === 'Enter' && s.chatDraft.trim()) this.chatSay(s.chatDraft.trim()); },
+      chatSend: () => { if (s.chatDraft.trim()) this.chatSay(s.chatDraft.trim()); },
+      chatSendStyle: 'display:grid;place-items:center;width:28px;height:28px;border-radius:var(--radius-sm);border:1px solid var(--color-accent-700);background:transparent;color:var(--color-accent-200);cursor:pointer',
+
+      sessionExpired: s.sessionOpen,
+      dismissSession: () => this.setState({ sessionOpen: false })
+    };
+  }
+}
+
+</script>
+</body>
+</html>

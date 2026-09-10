@@ -1,15 +1,17 @@
-# Docstack
+# Sift
 
 Turn messy documents — invoices, receipts, scribbled notes, scans, photos of handwriting, resumes, whatever shows up — into structured, queryable data. Built as a take-home assignment for Zamp.
 
 **Live app:** _add your Netlify URL here after deploying_
-**Design decisions:** see [`decisions.md`](./decisions.md) — the more revealing document of the two.
+**Design decisions:** see [`decisions.md`](./decisions.md) — the more revealing document of the two, including how and why the UI was rebuilt mid-project (§15).
+
+> **Current status:** the frontend (three screens — Ingest / Review / Ask — plus a floating Q&A chat and a "States" scenario switcher) is built and visually complete, currently running on the same demo data as the original design prototype so the UI/UX could be verified before wiring it to the backend. The backend (Express/Mongo/Claude pipeline described below) is built and tested independently. Connecting the two — plus adding the source-quote provenance extraction described in `decisions.md` §15 — is the next step.
 
 ## What it does
 
 1. Drop a document (PDF, photo/scan, or plain text) — or click a sample if you don't have one handy.
-2. Claude reads it — whatever it is — and returns a document type guess, a plain-language summary, and a structured set of fields, with low-confidence fields flagged and genuinely unreadable documents flagged as such instead of guessed at.
-3. Every document is searchable — plain keyword search always works; asking a question in plain language ("invoices over $100 from Acme") gets translated into a real filtered query, with an automatic fallback to keyword search if that doesn't pan out.
+2. Claude reads it — whatever it is — and returns a document type guess, a plain-language summary, and a structured set of fields, with low-confidence fields flagged and genuinely unreadable documents flagged as such instead of guessed at. In the UI, click a field and the exact span of source text it came from lights up.
+3. Ask questions across the whole corpus in plain language, and get an answer with citations back to the specific fields it's grounded in — or an explicit refusal when nothing supports an answer, never a guess.
 
 The interesting part isn't the CRUD — it's that the schema for "structured data" is different for every document and isn't known in advance. See `decisions.md` for how that shaped the storage, search, and extraction design, and for the security consideration in letting an LLM's output anywhere near a database query.
 
