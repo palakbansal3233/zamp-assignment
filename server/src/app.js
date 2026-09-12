@@ -6,6 +6,7 @@ const { errorHandler } = require('./middleware/errorHandler');
 const documentsRouter = require('./routes/documents');
 const queryRouter = require('./routes/query');
 const healthRouter = require('./routes/health');
+const askRouter = require('./routes/ask');
 
 /**
  * The "core" Express app, deliberately defined WITHOUT an /api prefix on its
@@ -44,6 +45,7 @@ function createApp() {
   app.use('/health', healthRouter);
   app.use('/documents', documentsRouter);
   app.use('/query', queryRouter);
+  app.use('/ask', askRouter);
 
   app.use((req, res) => res.status(404).json({ error: 'Not found.' }));
   app.use(errorHandler);

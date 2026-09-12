@@ -60,14 +60,11 @@ async function distinctDocTypes() {
 }
 
 async function sampleFieldKeys() {
-  const docs = await Document.find({ status: 'done' }, 'fields').sort({ createdAt: -1 }).limit(40).lean();
-  const keys = new Set();
-  for (const doc of docs) {
-    if (doc.fields && typeof doc.fields === 'object') {
-      Object.keys(doc.fields).forEach((k) => keys.add(k));
-    }
-  }
-  return Array.from(keys).slice(0, 60);
+  // `fields` is now an array of descriptors, not a flat object — Mongo's
+  // distinct() already knows how to pull the set of `key` values out of an
+  // array field, so this no longer needs to fetch documents and iterate.
+  const keys = await Document.distinct('fields.key', { status: 'done' });
+  return keys.slice(0, 60);
 }
 
 module.exports = { search };

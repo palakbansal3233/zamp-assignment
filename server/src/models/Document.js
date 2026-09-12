@@ -2,10 +2,53 @@ const mongoose = require('mongoose');
 
 const { Schema } = mongoose;
 
-// Documents arrive as anything from an invoice to a handwritten note, so the
-// extracted fields have no fixed shape. We deliberately use Schema.Types.Mixed
-// for `fields` rather than a per-document-type collection or a rigid schema —
-// see decisions.md ("Dynamic schema over per-type collections").
+// One extracted field, however the document arrived. Each is its own
+// subdocument rather than a flat `{key: value}` map because a real field
+// carries a lot more than a value now: where it came from (`quote`, matched
+// against `documentText` client-side to drive the Review screen's
+// click-to-highlight provenance), how sure the model was, whether it needs a
+// human's confirmation (and, if so, what the plausible resolutions are), and
+// whether it's sensitive enough to warrant a caution before it's cited in an
+// answer. `key` stays the stable identifier (used in the PATCH route and as
+// the React list key); `label` is what's actually shown.
+const FieldSchema = new Schema(
+  {
+    key: { type: String, required: true },
+    label: { type: String, default: '' },
+    value: { type: Schema.Types.Mixed },
+
+    // Verbatim substring of `documentText` this value came from. '' means
+    // the model couldn't point at one clean span (e.g. a value it inferred
+    // rather than read directly) — the client just won't highlight it; a
+    // quote that turns out not to actually appear in documentText (a
+    // hallucinated span) degrades the same way, never breaks anything.
+    quote: { type: String, default: '' },
+
+    confidence: { type: Number, default: null, min: 0, max: 1 },
+
+    // Upgrades the old flat `lowConfidenceFields: [string]` list into a
+    // first-class per-field concept: a reason, and concrete resolutions the
+    // model itself proposed (e.g. ["Keep 4%", "Keep 496.00"]) rather than
+    // just a generic "are you sure?".
+    needsReview: { type: Boolean, default: false },
+    reviewNote: { type: String, default: null },
+    reviewActions: { type: [String], default: [] },
+
+    // Set once a human picks a resolution via PATCH /documents/:id/fields/:key.
+    confirmed: { type: Boolean, default: false },
+    resolvedAction: { type: String, default: null },
+
+    // The model's own judgment that this value is sensitive (PII, financial
+    // account details, health information, an internal-only figure). Ask
+    // only ever trusts this stored value when deciding whether to caution
+    // on a citation — never whatever the model's answer text happens to say
+    // at ask-time, which could omit it.
+    sensitive: { type: Boolean, default: false },
+    sensitivityReason: { type: String, default: null },
+  },
+  { _id: false }
+);
+
 const DocumentSchema = new Schema(
   {
     filename: { type: String, required: true },
@@ -26,13 +69,32 @@ const DocumentSchema = new Schema(
     docType: { type: String, default: null, index: true },
     summary: { type: String, default: '' },
 
-    // The dynamic, arbitrarily-shaped structured data extracted from the doc.
-    fields: { type: Schema.Types.Mixed, default: {} },
-    lowConfidenceFields: { type: [String], default: [] },
+    // The dynamic, arbitrarily-shaped structured data extracted from the
+    // document — see decisions.md ("Dynamic schema over per-type
+    // collections", and the later note on why this is an array of
+    // descriptors rather than a flat Mixed object). One entry per top-level
+    // extracted concept; a naturally nested value (e.g. an invoice's line
+    // items) stays as one field whose `value` is itself an array/object,
+    // not flattened into one descriptor per leaf.
+    fields: { type: [FieldSchema], default: [] },
+
+    // Derived, read-only `{key: value}` shadow of `fields`, rebuilt every
+    // time `fields` is written (see utils/flatten.js#buildFieldIndex).
+    // Exists purely so smart-search filtering (services/queryBuilder.js)
+    // can keep querying a flat `fieldIndex.<key>` path instead of needing
+    // `$elemMatch` against the fields array — see decisions.md for why that
+    // tradeoff was made. Never set directly from a request body.
+    fieldIndex: { type: Schema.Types.Mixed, default: {} },
+
+    // The model's full verbatim transcription of the document (capped —
+    // see extraction.js), used purely as the substring-match target for
+    // `fields[].quote`. Not shown as "the extracted data" itself.
+    documentText: { type: String, default: '' },
+
     unreadable: { type: Boolean, default: false },
     unreadableReason: { type: String, default: null },
 
-    // Flattened concatenation of every string/number leaf in `fields`, plus
+    // Flattened concatenation of every field's key/label/value, plus
     // summary/docType/filename — rebuilt on every save. Powers full-text
     // search without needing per-field indexes we can't predict in advance.
     searchableText: { type: String, default: '', index: 'text' },
@@ -45,11 +107,10 @@ const DocumentSchema = new Schema(
   {
     timestamps: true,
     // Mongoose's default `minimize: true` strips any key whose value is an
-    // empty object ({}) before saving. That's exactly what an "unreadable"
-    // document's `fields` legitimately is — without this, it would silently
-    // come back as `undefined` instead of `{}`, which is a meaningfully
-    // different signal to the client (missing data vs. "we checked, there's
-    // nothing here").
+    // empty object ({}) before saving. `fieldIndex` legitimately is `{}` for
+    // an unreadable document — without this, it would silently come back as
+    // `undefined` instead of `{}`, a meaningfully different signal (missing
+    // data vs. "we checked, there's nothing here").
     minimize: false,
   }
 );

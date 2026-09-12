@@ -274,6 +274,7 @@ a:hover { color: var(--color-accent-200); }
 .state-btn:hover { background: var(--color-accent-900); }
 .state-btn.is-active { border-color: var(--color-accent-700); background: var(--color-accent-900); }
 .state-btn-label { font-size: 12.5px; }
+.state-btn-demo-tag { color: var(--color-neutral-500); font-weight: 400; }
 .state-btn-note { font-size: 11px; text-wrap: pretty; color: var(--color-neutral-500); }
 
 /* ── chat widget ── */

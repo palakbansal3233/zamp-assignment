@@ -2,7 +2,7 @@ const Document = require('../models/Document');
 const { config } = require('../config');
 const { classifyFile } = require('../services/fileTypes');
 const { extractStructuredData } = require('../services/extraction');
-const { buildSearchableText } = require('../utils/flatten');
+const { buildSearchableText, buildFieldIndex } = require('../utils/flatten');
 const { HttpError } = require('../middleware/errorHandler');
 
 const LIST_PROJECTION = '-fileData -searchableText';
@@ -79,7 +79,8 @@ async function uploadDocument(req, res) {
     doc.docType = result.unreadable ? null : result.docType;
     doc.summary = result.summary;
     doc.fields = result.fields;
-    doc.lowConfidenceFields = result.lowConfidenceFields;
+    doc.documentText = result.documentText;
+    doc.fieldIndex = buildFieldIndex(result.fields);
     doc.searchableText = buildSearchableText({
       filename,
       docType: doc.docType,
@@ -114,7 +115,45 @@ async function listDocuments(req, res) {
 async function getDocument(req, res) {
   const doc = await Document.findById(req.params.id, LIST_PROJECTION).lean();
   if (!doc) throw new HttpError(404, 'Document not found.');
+
+  // "Fields this document added to the dataset" — computed at read time
+  // (not stored) so it can't go stale if other documents are later deleted
+  // or edited. Cheap: one distinct() over an already-indexed-by-nothing but
+  // small collection, not run on every list/upload, only when a document is
+  // actually opened.
+  const priorKeys = new Set(
+    await Document.distinct('fields.key', { _id: { $ne: doc._id }, status: 'done' })
+  );
+  doc.newFieldKeys = (doc.fields || []).map((f) => f.key).filter((k) => !priorKeys.has(k));
+
   res.json(doc);
+}
+
+async function confirmField(req, res) {
+  const { id, key } = req.params;
+  const { value, confirmed, resolvedAction } = req.body || {};
+
+  const doc = await Document.findById(id);
+  if (!doc) throw new HttpError(404, 'Document not found.');
+
+  const field = doc.fields.find((f) => f.key === key);
+  if (!field) throw new HttpError(404, `No field "${key}" on this document.`);
+
+  if (value !== undefined) field.value = value;
+  if (typeof resolvedAction === 'string') field.resolvedAction = resolvedAction;
+  field.confirmed = confirmed !== undefined ? Boolean(confirmed) : true;
+  field.needsReview = false;
+
+  doc.fieldIndex = buildFieldIndex(doc.fields);
+  doc.searchableText = buildSearchableText({
+    filename: doc.filename,
+    docType: doc.docType,
+    summary: doc.summary,
+    fields: doc.fields,
+  });
+  await doc.save();
+
+  res.json(asPublicDoc(doc));
 }
 
 async function getDocumentFile(req, res) {
@@ -163,7 +202,8 @@ async function retryDocument(req, res) {
     doc.docType = result.unreadable ? null : result.docType;
     doc.summary = result.summary;
     doc.fields = result.fields;
-    doc.lowConfidenceFields = result.lowConfidenceFields;
+    doc.documentText = result.documentText;
+    doc.fieldIndex = buildFieldIndex(result.fields);
     doc.searchableText = buildSearchableText({
       filename: doc.filename,
       docType: doc.docType,
@@ -185,4 +225,5 @@ module.exports = {
   getDocumentFile,
   deleteDocument,
   retryDocument,
+  confirmField,
 };

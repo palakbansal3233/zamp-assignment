@@ -24,7 +24,7 @@ const QUERY_TOOL = {
             field: {
               type: 'string',
               description:
-                'Field to filter on: "docType", "summary", "filename", or "fields.<key>" using one of the known field keys provided.',
+                'Field to filter on: "docType", "summary", "filename", or "fieldIndex.<key>" using one of the known field keys provided.',
             },
             operator: { type: 'string', enum: ['eq', 'gt', 'gte', 'lt', 'lte', 'contains'] },
             value: { description: 'The comparison value (string or number).' },
@@ -45,7 +45,11 @@ const QUERY_TOOL = {
 // it gets rejected here rather than reaching the database. We never eval()
 // or otherwise execute anything the model returns.
 const SAFE_TOP_LEVEL_FIELDS = new Set(['docType', 'summary', 'filename']);
-const SAFE_FIELD_PATH = /^fields(\.[a-zA-Z0-9_]+){1,6}$/;
+// `fieldIndex` is the derived flat {key: value} shadow of the `fields`
+// array (see models/Document.js / utils/flatten.js#buildFieldIndex) — this
+// stays a single flat path check specifically so it doesn't have to grow
+// into building safe $elemMatch clauses against the fields array itself.
+const SAFE_FIELD_PATH = /^fieldIndex(\.[a-zA-Z0-9_]+){1,6}$/;
 const OPERATOR_MAP = { eq: '$eq', gt: '$gt', gte: '$gte', lt: '$lt', lte: '$lte' };
 
 function escapeRegex(str) {
@@ -88,7 +92,7 @@ async function buildSmartQuery(question, context) {
 
   const grounding =
     `Known document types seen so far: ${context.docTypes.join(', ') || '(none yet)'}\n` +
-    `Known field keys seen so far (use these exact names when relevant, under "fields."): ${
+    `Known field keys seen so far (use these exact names when relevant, under "fieldIndex."): ${
       context.fieldKeys.join(', ') || '(none yet)'
     }`;
 

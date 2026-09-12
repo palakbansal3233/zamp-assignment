@@ -14,8 +14,14 @@ const config = {
   maxFileBytes: parseInt(process.env.MAX_FILE_BYTES || String(4 * 1024 * 1024), 10),
   // How long we'll let a single extraction call run before giving up and
   // reporting a clear error, rather than hanging until the platform kills
-  // the function with an opaque timeout.
-  extractionTimeoutMs: parseInt(process.env.EXTRACTION_TIMEOUT_MS || '25000', 10),
+  // the function with an opaque timeout. Raised from 25s once extraction
+  // started also returning a full document transcription (see
+  // services/extraction.js) — a bigger, streamed response takes longer.
+  extractionTimeoutMs: parseInt(process.env.EXTRACTION_TIMEOUT_MS || '45000', 10),
+  // Same idea, for the /ask endpoint's grounded-answer call — kept as its
+  // own knob since the corpus-digest prompt has different size/latency
+  // characteristics than a single document's extraction.
+  askTimeoutMs: parseInt(process.env.ASK_TIMEOUT_MS || '25000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
 };
 

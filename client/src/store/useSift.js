@@ -1,0 +1,463 @@
+import { useCallback, useEffect, useState } from 'react';
+import { useSiftDemo } from './useSiftDemo';
+import * as api from '../api/client';
+import { buildProvenanceLines } from '../utils/provenance';
+import { SCENARIOS } from '../mock/data';
+
+// Real Sift engine — the Phase B replacement for useSiftDemo. It composes
+// real API state with the (still fully working) demo engine rather than
+// reimplementing 15 illustrative scenarios from scratch: useSiftDemo is
+// always called (rules of hooks), and its output is used verbatim for the
+// scenarios that still need infrastructure this project doesn't build
+// (auth, billing, an offline queue) — everything else is driven by the
+// real backend. See decisions.md.
+const REAL_SCENARIO_IDS = new Set(['ok', 'upload', 'reject', 'blank', 'nocite', '404']);
+const DEMO_SCENARIO_IDS = new Set(SCENARIOS.map((s) => s.id).filter((id) => !REAL_SCENARIO_IDS.has(id)));
+
+const DOC_TYPE_ICONS = {
+  invoice: 'ph ph-receipt',
+  receipt: 'ph ph-receipt',
+  contract: 'ph ph-scroll',
+  resume: 'ph ph-user-circle',
+  form: 'ph ph-note-pencil',
+  letter: 'ph ph-envelope-simple-open',
+  handwritten_note: 'ph ph-notepad',
+};
+function iconForDocType(docType) {
+  return DOC_TYPE_ICONS[docType] || 'ph ph-file-text';
+}
+
+function confidenceColor(conf) {
+  if (conf == null) return 'var(--color-neutral-500)';
+  if (conf >= 0.9) return 'var(--color-accent)';
+  if (conf >= 0.8) return 'var(--color-accent-600)';
+  return 'var(--color-neutral-500)';
+}
+
+function formatFieldValue(value) {
+  if (value === null || value === undefined) return '—';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
+function base64ToFile(base64, filename, mimeType) {
+  const byteChars = atob(base64);
+  const bytes = new Uint8Array(byteChars.length);
+  for (let i = 0; i < byteChars.length; i += 1) bytes[i] = byteChars.charCodeAt(i);
+  return new File([bytes], filename, { type: mimeType });
+}
+const BLANK_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
+export function useSift() {
+  const demo = useSiftDemo(); // kept alive so DEMO_SCENARIO_IDS keep working exactly as before
+
+  const [screen, setScreen] = useState('ingest');
+  const [scen, setScen] = useState('ok');
+  const [statesOpen, setStatesOpen] = useState(false);
+
+  const [health, setHealth] = useState({ extractionConfigured: true, maxFileBytes: 4 * 1024 * 1024 });
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  const [documents, setDocuments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [inFlight, setInFlight] = useState([]); // [{tempId, filename}]
+  const [failedUploads, setFailedUploads] = useState([]); // [{id,name,kind,icon,sub,actions}]
+
+  const [docId, setDocId] = useState(null);
+  const [openDocData, setOpenDocData] = useState(null);
+  const [docLoading, setDocLoading] = useState(false);
+  const [active, setActive] = useState(null);
+  const [hover, setHover] = useState(null);
+  const [confirmingKey, setConfirmingKey] = useState(null);
+
+  const [askDraft, setAskDraft] = useState('');
+  const [askBusy, setAskBusy] = useState(false);
+  const [askResult, setAskResult] = useState(null);
+  const [suggestions, setSuggestions] = useState([]);
+
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatBadge, setChatBadge] = useState(true);
+  const [chatDraft, setChatDraft] = useState('');
+  const [chatBusy, setChatBusy] = useState(false);
+  const [chatMsgs, setChatMsgs] = useState([{ role: 'bot', text: 'Ask in plain words — I answer only from fields I can point at, and I\'ll say so if nothing supports an answer.' }]);
+
+  const refreshSuggestions = useCallback(async () => {
+    try {
+      const res = await api.getSuggestions();
+      setSuggestions(res.questions || []);
+    } catch {
+      // Non-fatal — the suggestions list just stays empty/stale.
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const h = await api.getHealth();
+        if (!cancelled) setHealth(h);
+      } catch {
+        /* fall back to defaults */
+      }
+      try {
+        const res = await api.listDocuments({ page: 1, limit: 50 });
+        if (!cancelled) setDocuments(res.items);
+      } catch {
+        /* ingest just shows empty; per-action errors surface individually */
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+      refreshSuggestions();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshSuggestions]);
+
+  const openDoc = useCallback(async (id, fieldKey) => {
+    setDocId(id);
+    setActive(fieldKey || null);
+    setScreen('review');
+    setDocLoading(true);
+    setOpenDocData(null);
+    try {
+      const full = await api.getDocument(id);
+      setOpenDocData(full);
+    } catch {
+      setOpenDocData(null);
+    } finally {
+      setDocLoading(false);
+    }
+  }, []);
+
+  // ---- uploads ----
+  const runUpload = useCallback(
+    async (filename, factory) => {
+      const tempId = `${filename}-${Date.now()}-${Math.random()}`;
+      setInFlight((prev) => [...prev, { tempId, filename }]);
+      try {
+        const created = await factory();
+        setDocuments((prev) => [created, ...prev]);
+        refreshSuggestions();
+        return created;
+      } catch (err) {
+        setFailedUploads((prev) => [
+          ...prev,
+          {
+            id: tempId,
+            name: filename,
+            kind: 'Upload failed',
+            icon: 'ph ph-file-x',
+            sub: err.message,
+            actions: [{ label: 'Dismiss', cls: 'btn-ghost', run: () => setFailedUploads((p) => p.filter((f) => f.id !== tempId)) }],
+          },
+        ]);
+        return null;
+      } finally {
+        setInFlight((prev) => prev.filter((u) => u.tempId !== tempId));
+      }
+    },
+    [refreshSuggestions]
+  );
+
+  const handleFiles = useCallback(
+    async (files) => {
+      for (const file of files) {
+        // eslint-disable-next-line no-await-in-loop
+        await runUpload(file.name, () => api.uploadDocument(file));
+      }
+    },
+    [runUpload]
+  );
+
+  const handleRetryDocument = useCallback(
+    async (id) => {
+      try {
+        const updated = await api.retryDocument(id);
+        setDocuments((prev) => prev.map((d) => (d._id === updated._id ? updated : d)));
+        if (docId === id) setOpenDocData((prev) => (prev ? { ...prev, ...updated } : updated));
+      } catch {
+        /* the row's own sub-text stays as the previous error */
+      }
+    },
+    [docId]
+  );
+
+  // ---- field confirm/resolve ----
+  const handleConfirmField = useCallback(
+    async (key, resolvedAction) => {
+      if (!docId) return;
+      setConfirmingKey(key);
+      try {
+        const updated = await api.confirmField(docId, key, { confirmed: true, resolvedAction });
+        setOpenDocData((prev) => (prev ? { ...prev, ...updated } : updated));
+        setDocuments((prev) => prev.map((d) => (d._id === updated._id ? { ...d, ...updated } : d)));
+      } catch {
+        /* the field just stays flagged; nothing else to do here */
+      } finally {
+        setConfirmingKey(null);
+      }
+    },
+    [docId]
+  );
+
+  // ---- ask ----
+  const runAskReal = useCallback(async (question) => {
+    const q = (question ?? '').trim();
+    if (!q) return;
+    setAskDraft(q);
+    setAskBusy(true);
+    setAskResult(null);
+    try {
+      const res = await api.askQuestion(q);
+      setAskResult(res);
+    } catch (err) {
+      setAskResult({ refused: true, reason: err.message, answer: null, citations: [], caveats: [] });
+    } finally {
+      setAskBusy(false);
+    }
+  }, []);
+
+  const chatSayReal = useCallback(async (text) => {
+    setChatMsgs((prev) => [...prev, { role: 'user', text }]);
+    setChatDraft('');
+    setChatBusy(true);
+    try {
+      const res = await api.askQuestion(text);
+      if (res.refused) {
+        setChatMsgs((prev) => [...prev, { role: 'err', title: 'No answer found', text: res.reason || 'Nothing in your documents supports an answer.' }]);
+      } else {
+        let note = '';
+        if (res.caveats?.length) note += ` Note: sources disagree on ${res.caveats.map((c) => c.fieldKey).join(', ')}.`;
+        if (res.sensitive) note += ' ⚠ This touches a field marked sensitive — use judgment before sharing.';
+        setChatMsgs((prev) => [
+          ...prev,
+          { role: 'bot', text: res.answer + note, cites: (res.citations || []).map((c) => [c.documentId, c.fieldKey, `${c.filename} · ${c.label || c.fieldKey}`]) },
+        ]);
+      }
+    } catch (err) {
+      setChatMsgs((prev) => [...prev, { role: 'err', title: 'Something went wrong', text: err.message }]);
+    } finally {
+      setChatBusy(false);
+    }
+  }, []);
+
+  // ---- scenarios (States panel) ----
+  const setScenario = useCallback(
+    (id) => {
+      // Always sync the demo engine's own internal state too, even for a
+      // "real" id — cheap, and keeps it from showing stale content from a
+      // previous demo scenario if the user switches back to one later.
+      const demoRunner = demo.states.scenarios.find((s) => s.id === id);
+      demoRunner?.run();
+
+      setScen(id);
+      setStatesOpen(false);
+      setActive(null);
+      setAskResult(null);
+      const targetScreen = SCENARIOS.find((s) => s.id === id)?.screen || 'ingest';
+      setScreen(targetScreen);
+
+      if (id === 'upload' || id === 'reject') {
+        const maxBytes = health.maxFileBytes || 4 * 1024 * 1024;
+        const big = 'x'.repeat(maxBytes + 2048);
+        runUpload('oversized-test-file.txt', () => api.uploadRawText('oversized-test-file.txt', big));
+        if (id === 'reject') {
+          const fakeDocx = new File([new Uint8Array([1, 2, 3, 4])], 'resume.docx', {
+            type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          });
+          runUpload('resume.docx', () => api.uploadDocument(fakeDocx));
+        }
+      } else if (id === 'blank') {
+        const file = base64ToFile(BLANK_PNG_BASE64, 'blank-scan-demo.png', 'image/png');
+        runUpload(file.name, () => api.uploadDocument(file)).then((created) => {
+          if (created) openDoc(created._id);
+        });
+      } else if (id === 'nocite') {
+        runAskReal('What color is the sky on the planet Neptune?');
+      }
+      // 'ok' and '404' need no extra action beyond the screen switch above.
+    },
+    [demo, health.maxFileBytes, runUpload, runAskReal, openDoc]
+  );
+
+  // ---- derived view models (real mode) ----
+  const demoMode = DEMO_SCENARIO_IDS.has(scen);
+
+  const queueItems = documents.map((d) => {
+    if (d.status === 'error') {
+      return {
+        id: d._id, name: d.filename, kind: 'Extraction failed', icon: 'ph ph-file-x', clickable: false,
+        sub: d.errorMessage || 'Extraction failed for an unknown reason.', status: 'failed',
+        actions: [{ label: 'Retry', cls: 'btn-secondary', run: () => handleRetryDocument(d._id) }],
+      };
+    }
+    return {
+      id: d._id, name: d.filename, kind: d.docType ? d.docType.replace(/_/g, ' ') : 'document', icon: iconForDocType(d.docType), clickable: true,
+      sub: d.unreadable ? d.unreadableReason || 'Could not be read clearly.' : d.summary || '',
+      status: 'done',
+      fieldCount: `${(d.fields || []).length} fields extracted`,
+      flagLabel: (d.fields || []).some((f) => f.needsReview) ? 'needs review' : 'clean',
+    };
+  });
+  const pendingItems = inFlight.map((u) => ({
+    id: u.tempId, name: u.filename, kind: 'Reading…', icon: 'ph ph-tray-arrow-down', clickable: false,
+    sub: 'Uploading and extracting fields…', status: 'pending', pct: 65, stage: 'reading',
+  }));
+
+  const realIngest = {
+    addDoc: () => {},
+    onFiles: handleFiles,
+    dropDisabled: false,
+    dropNote: 'No schema needed — fields are inferred per document and merged into the dataset',
+    readyLabel: `${documents.filter((d) => d.status === 'done').length} ready${inFlight.length ? ` · ${inFlight.length} reading` : ''}`,
+    items: [...failedUploads, ...queueItems, ...pendingItems],
+    openDoc,
+  };
+
+  const doc = openDocData;
+  const realReview = {
+    docLoading,
+    docTabs: documents
+      .filter((d) => d.status === 'done')
+      .slice(0, 8)
+      .map((d) => ({ id: d._id, label: d.filename, active: docId === d._id, go: () => openDoc(d._id) })),
+    meta: doc ? `${doc.mimeType} · ${(doc.sizeBytes / 1024).toFixed(0)}KB` : '',
+    schemaNote: doc ? `${(doc.fields || []).length} fields inferred from the document itself — no template was applied` : '',
+    newFields: doc?.newFieldKeys || [],
+    readable: !!doc && !doc.unreadable,
+    unreadableTitle: 'No text could be recovered',
+    unreadableText: doc?.unreadableReason || 'The document could not be read clearly enough to extract structured data.',
+    docLines: doc ? buildProvenanceLines(doc.documentText, doc.fields).map((line) => ({
+      kind: line.kind,
+      amt: null,
+      segments: line.segments.map((seg) => ({
+        text: seg.text,
+        fieldId: seg.fieldKey,
+        lit: seg.fieldKey ? active === seg.fieldKey || hover === seg.fieldKey : false,
+        onClick: seg.fieldKey ? () => setActive((a) => (a === seg.fieldKey ? null : seg.fieldKey)) : undefined,
+        onEnter: seg.fieldKey ? () => setHover(seg.fieldKey) : undefined,
+        onLeave: seg.fieldKey ? () => setHover(null) : undefined,
+      })),
+    })) : [],
+    fieldRows: (doc?.fields || []).map((f) => {
+      const lit = active === f.key || hover === f.key;
+      const needs = f.needsReview && !f.confirmed;
+      const c = f.confirmed ? 0.99 : f.confidence ?? 0.7;
+      return {
+        id: f.key, label: f.label || f.key, value: formatFieldValue(f.value), conflict: false, lit, needs,
+        checkNote: f.reviewNote || '',
+        checkActions: (f.reviewActions?.length ? f.reviewActions : ['Confirm']).map((label) => ({
+          label: confirmingKey === f.key ? '…' : label,
+          run: () => handleConfirmField(f.key, label),
+        })),
+        pct: Math.round(c * 100),
+        barColor: confidenceColor(c),
+        onClick: () => setActive((a) => (a === f.key ? null : f.key)),
+        onEnter: () => setHover(f.key),
+        onLeave: () => setHover(null),
+      };
+    }),
+    truncated: false,
+    truncatedNote: '',
+    notice: doc?.unreadable
+      ? null
+      : (doc?.fields || []).some((f) => f.sensitive)
+      ? {
+          icon: 'ph ph-eye-slash',
+          title: 'This document contains sensitive information',
+          text: `Flagged field(s): ${(doc.fields || []).filter((f) => f.sensitive).map((f) => f.label || f.key).join(', ')}. Consider before sharing externally.`,
+          actions: [],
+        }
+      : null,
+    clearActive: () => { setActive(null); setHover(null); },
+    goAsk: () => setScreen('ask'),
+  };
+
+  const askError = askResult && askResult.refused
+    ? {
+        icon: 'ph ph-shield-check',
+        title: 'No answer found',
+        text: askResult.reason || 'Nothing in your documents supports an answer to that.',
+        actions: [{ label: 'Rephrase', cls: 'btn-ghost', run: () => setAskResult(null) }],
+        code: '',
+      }
+    : null;
+
+  const askAnswer = askResult && !askResult.refused
+    ? {
+        question: askResult.question,
+        text: askResult.answer,
+        caveat:
+          askResult.caveats?.length
+            ? `Sources disagree on ${askResult.caveats.map((c) => c.fieldKey).join(', ')} — ${askResult.caveats
+                .map((c) => c.values.map((v) => `${v.filename}: ${JSON.stringify(v.value)}`).join(' vs. '))
+                .join('; ')}.`
+            : askResult.sensitive
+            ? `This answer draws on a field marked sensitive (${askResult.sensitiveFields.join(', ')}) — consider before sharing externally.`
+            : null,
+        citations: (askResult.citations || []).map((c) => ({ label: `${c.filename} · ${c.label || c.fieldKey}`, go: () => openDoc(c.documentId, c.fieldKey) })),
+      }
+    : null;
+
+  const realAsk = {
+    heading: documents.length ? `${documents.length} document${documents.length === 1 ? '' : 's'}, no shared schema. Here is what they can answer.` : 'Upload a document to start asking questions.',
+    draft: askDraft,
+    onDraft: setAskDraft,
+    submit: () => runAskReal(askDraft),
+    busy: askBusy,
+    busyStage: 'Matching your question against the extracted fields',
+    busyPct: askBusy ? 60 : 0,
+    error: askError,
+    answer: askAnswer,
+    suggestions: suggestions.map((q, i) => ({
+      rank: String(i + 1).padStart(2, '0'), text: q.text, source: (q.docTypes || []).join(', ') || 'corpus', score: Math.max(0.5, 1 - i * 0.08),
+      ask: () => runAskReal(q.text),
+    })),
+    suggestionsHint: "generated from your documents' extracted fields",
+  };
+
+  const realChat = {
+    open: chatOpen, badge: chatBadge,
+    toggle: () => { setChatOpen((o) => !o); setChatBadge(false); },
+    broken: false,
+    status: `${documents.filter((d) => d.status === 'done').length} documents · answers carry citations`,
+    busy: chatBusy,
+    msgs: chatMsgs.map((m, i) => ({
+      key: i, role: m.role, title: m.title || '', text: m.text,
+      cites: (m.cites || []).map(([dId, fKey, label]) => ({ label, go: () => openDoc(dId, fKey) })),
+      actions: [],
+    })),
+    chips: suggestions.slice(0, 2).map((q) => ({ label: q.text, run: () => chatSayReal(q.text) })),
+    draft: chatDraft,
+    onDraft: setChatDraft,
+    placeholder: 'Ask about any document…',
+    send: () => { if (chatDraft.trim()) chatSayReal(chatDraft.trim()); },
+  };
+
+  const realBanner = !bannerDismissed && health.extractionConfigured === false
+    ? {
+        icon: 'ph ph-key', title: 'AI extraction is not configured.',
+        text: 'Set ANTHROPIC_API_KEY on the server to enable real extraction and Ask — uploads will still save, just without structured data.',
+        cta: 'Dismiss', action: () => setBannerDismissed(true),
+      }
+    : null;
+
+  return {
+    loading,
+    nav: { go: (s) => setScreen(s), current: screen },
+    topBar: demoMode ? demo.topBar : { pct: inFlight.length ? 60 : 0 },
+    banner: demoMode ? demo.banner : realBanner,
+    ingest: demoMode ? demo.ingest : realIngest,
+    review: demoMode ? demo.review : realReview,
+    ask: demoMode ? demo.ask : realAsk,
+    states: {
+      open: statesOpen,
+      toggle: () => setStatesOpen((o) => !o),
+      current: scen,
+      scenarios: SCENARIOS.map((sc) => ({ ...sc, isReal: REAL_SCENARIO_IDS.has(sc.id), run: () => setScenario(sc.id) })),
+    },
+    chat: demoMode ? demo.chat : realChat,
+    session: demoMode ? demo.session : { open: false, dismiss: () => {} },
+  };
+}

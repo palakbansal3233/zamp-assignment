@@ -16,7 +16,10 @@ export default function StatesPanel({ states }) {
             className={`state-btn${states.current === sc.id ? ' is-active' : ''}`}
             onClick={sc.run}
           >
-            <span className="state-btn-label">{sc.label}</span>
+            <span className="state-btn-label">
+              {sc.label}
+              {sc.isReal === false && <span className="state-btn-demo-tag"> (demo)</span>}
+            </span>
             <span className="state-btn-note">{sc.note}</span>
           </button>
         ))}

@@ -62,7 +62,7 @@ export default function AskScreen({ ask }) {
 
         <div className="suggestions-header">
           <h6>Questions this corpus can answer</h6>
-          <span className="suggestions-hint">ranked by how completely the data supports an answer</span>
+          <span className="suggestions-hint">{ask.suggestionsHint || 'ranked by how completely the data supports an answer'}</span>
         </div>
 
         <div className="suggestions-list">

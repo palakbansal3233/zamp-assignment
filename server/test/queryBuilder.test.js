@@ -8,9 +8,9 @@ describe('sanitizeFilters', () => {
   test('accepts well-formed filters on known-safe fields', () => {
     const out = sanitizeFilters([
       { field: 'docType', operator: 'eq', value: 'invoice' },
-      { field: 'fields.total_amount', operator: 'gte', value: 500 },
+      { field: 'fieldIndex.total_amount', operator: 'gte', value: 500 },
     ]);
-    expect(out).toEqual([{ docType: { $eq: 'invoice' } }, { 'fields.total_amount': { $gte: 500 } }]);
+    expect(out).toEqual([{ docType: { $eq: 'invoice' } }, { 'fieldIndex.total_amount': { $gte: 500 } }]);
   });
 
   test('rejects fields outside the allowlist (no raw top-level Mongo operators)', () => {
@@ -18,10 +18,10 @@ describe('sanitizeFilters', () => {
     expect(out).toEqual([]);
   });
 
-  test('rejects attempts to reach fields.__proto__ / constructor style paths', () => {
+  test('rejects attempts to reach fieldIndex.__proto__ / constructor style paths', () => {
     const out = sanitizeFilters([
-      { field: 'fields.__proto__.polluted', operator: 'eq', value: 'x' },
-      { field: 'fields.constructor', operator: 'eq', value: 'x' },
+      { field: 'fieldIndex.__proto__.polluted', operator: 'eq', value: 'x' },
+      { field: 'fieldIndex.constructor', operator: 'eq', value: 'x' },
     ]);
     // __proto__/constructor aren't in [a-zA-Z0-9_]+ exclusively... they are
     // technically alnum, so we assert they're at least contained safely as

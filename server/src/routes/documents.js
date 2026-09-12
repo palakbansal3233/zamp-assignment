@@ -7,6 +7,7 @@ const {
   getDocumentFile,
   deleteDocument,
   retryDocument,
+  confirmField,
 } = require('../controllers/documentsController');
 
 const router = express.Router();
@@ -16,6 +17,7 @@ router.get('/', asyncHandler(listDocuments));
 router.get('/:id', asyncHandler(getDocument));
 router.get('/:id/file', asyncHandler(getDocumentFile));
 router.post('/:id/retry', asyncHandler(retryDocument));
+router.patch('/:id/fields/:key', asyncHandler(confirmField));
 router.delete('/:id', asyncHandler(deleteDocument));
 
 module.exports = router;

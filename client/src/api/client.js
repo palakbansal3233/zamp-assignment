@@ -83,3 +83,18 @@ export function fileUrl(id) {
 export function getHealth() {
   return request('/health');
 }
+
+export function askQuestion(question) {
+  return request('/ask', { method: 'POST', body: JSON.stringify({ question }) });
+}
+
+export function getSuggestions() {
+  return request('/ask/suggestions');
+}
+
+export function confirmField(docId, key, body) {
+  return request(`/documents/${docId}/fields/${encodeURIComponent(key)}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}

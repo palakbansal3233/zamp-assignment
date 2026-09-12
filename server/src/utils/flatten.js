@@ -23,11 +23,33 @@ function flattenToSearchableText(value, depth = 0) {
   return '';
 }
 
+// `fields` is now an array of field descriptors ({key, label, value, ...}),
+// not an arbitrary nested object — so instead of flattening the whole
+// descriptor (which would pull quote/confidence/reviewNote text into the
+// search index too), we flatten just each field's own key/label/value.
 function buildSearchableText({ filename, docType, summary, fields }) {
-  return [filename, docType, summary, flattenToSearchableText(fields)]
+  const fieldsText = Array.isArray(fields)
+    ? fields.map((f) => `${f.key || ''} ${f.label || ''} ${flattenToSearchableText(f.value)}`).join(' ')
+    : '';
+  return [filename, docType, summary, fieldsText]
     .filter(Boolean)
     .join(' ')
     .slice(0, 20000); // keep the index sane even for very field-heavy documents
 }
 
-module.exports = { flattenToSearchableText, buildSearchableText };
+// The derived `{key: value}` shadow of `fields`, used only so smart-search
+// filtering can keep querying a flat path (`fieldIndex.<key>`) instead of
+// needing `$elemMatch` against the fields array — see decisions.md. Must be
+// recomputed and re-saved every time `fields` changes; there is no code path
+// that's allowed to write `fields` without also calling this.
+function buildFieldIndex(fields) {
+  const index = {};
+  if (Array.isArray(fields)) {
+    for (const f of fields) {
+      if (f && f.key) index[f.key] = f.value;
+    }
+  }
+  return index;
+}
+
+module.exports = { flattenToSearchableText, buildSearchableText, buildFieldIndex };

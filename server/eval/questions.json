@@ -1,0 +1,21 @@
+[
+  { "id": "q1", "category": "easy_lookup", "question": "What is the total due on invoice INV-001?", "expectedDocAliases": ["invoice_a"], "expectedAnswerContains": ["1,200", "1200"] },
+  { "id": "q2", "category": "easy_lookup", "question": "Who are the two parties to the services agreement?", "expectedDocAliases": ["contract"], "expectedAnswerContains": ["Acme", "Meridian"] },
+  { "id": "q3", "category": "easy_lookup", "question": "What technical skills does the candidate in the resume have?", "expectedDocAliases": ["resume"], "expectedAnswerContains": ["Node"] },
+  { "id": "q4", "category": "easy_lookup", "question": "What law governs the services agreement?", "expectedDocAliases": ["contract"], "expectedAnswerContains": ["Ireland"] },
+  { "id": "q5", "category": "easy_lookup", "question": "What is the invoice number for the invoice billed to Meridian Health Group?", "expectedDocAliases": ["invoice_b"], "expectedAnswerContains": ["INV-002"] },
+  { "id": "q6", "category": "easy_lookup", "question": "How long does the services agreement run before it automatically renews?", "expectedDocAliases": ["contract"], "expectedAnswerContains": ["12", "twelve"] },
+  { "id": "q7", "category": "easy_lookup", "question": "What was the candidate's most recent job title and employer?", "expectedDocAliases": ["resume"], "expectedAnswerContains": ["Northwind"] },
+
+  { "id": "q8", "category": "cross_doc_synthesis", "question": "What is the combined total due across both Acme Corp invoices?", "expectedDocAliases": ["invoice_a", "invoice_b"], "expectedAnswerContains": ["2,000", "2000"] },
+  { "id": "q9", "category": "cross_doc_synthesis", "question": "Which clients has Acme Corp billed across its invoices?", "expectedDocAliases": ["invoice_a", "invoice_b"], "expectedAnswerContains": ["Contoso"] },
+  { "id": "q10", "category": "cross_doc_synthesis", "question": "Is the company billed in invoice INV-002 also a party to the services agreement?", "expectedDocAliases": ["invoice_b", "contract"], "expectedAnswerContains": ["Meridian"] },
+
+  { "id": "q11", "category": "conflict", "question": "What late fee percentage applies to Acme Corp's overdue invoices?", "expectedDocAliases": ["invoice_a", "invoice_b"], "expectConflictCaveat": true, "note": "Conflict detection is scoped to citations sharing the exact same field key (see decisions.md) — this passes only if both invoices happened to extract the late fee under the same key. Reported separately, not counted against the pass/fail bar." },
+
+  { "id": "q12", "category": "refusal", "question": "What is the capital of France?", "expectedRefusal": true },
+  { "id": "q13", "category": "refusal", "question": "What does the corrupted scan document say?", "expectedRefusal": true },
+  { "id": "q14", "category": "refusal", "question": "What is the candidate's expected salary?", "expectedRefusal": true },
+  { "id": "q15", "category": "refusal", "question": "What is the wire transfer account number for any of these documents?", "expectedRefusal": true },
+  { "id": "q16", "category": "refusal", "question": "What is Acme Corp's tax identification number?", "expectedRefusal": true }
+]

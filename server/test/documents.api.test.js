@@ -12,7 +12,19 @@ jest.mock('../src/services/extraction', () => ({
   extractStructuredData: jest.fn(),
 }));
 
-const { extractStructuredData } = require('../src/services/extraction');
+// Smart search hits the same external API — mocked for the same reason.
+// This also means these tests behave identically whether or not the
+// developer's local server/.env happens to have a real ANTHROPIC_API_KEY
+// (it does, once you set one up) — a test that relied on the key being
+// *absent* to exercise the fallback path would pass locally-without-a-key
+// and silently stop testing anything the moment a real key was added.
+jest.mock('../src/services/queryBuilder', () => ({
+  buildSmartQuery: jest.fn(),
+  sanitizeFilters: jest.requireActual('../src/services/queryBuilder').sanitizeFilters,
+}));
+
+const { extractStructuredData, ExtractionConfigError } = require('../src/services/extraction');
+const { buildSmartQuery } = require('../src/services/queryBuilder');
 const { createApp } = require('../src/app');
 
 let mongod;
@@ -40,6 +52,27 @@ function pngBase64() {
   return 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 }
 
+// Builds one field descriptor with the new array shape's full set of
+// defaults filled in, so individual tests only need to name what they
+// actually care about.
+function field(key, value, overrides = {}) {
+  return {
+    key,
+    label: key,
+    value,
+    quote: '',
+    confidence: 0.9,
+    needsReview: false,
+    reviewNote: null,
+    reviewActions: [],
+    confirmed: false,
+    resolvedAction: null,
+    sensitive: false,
+    sensitivityReason: null,
+    ...overrides,
+  };
+}
+
 describe('POST /documents', () => {
   test('extracts and stores a text document end-to-end', async () => {
     extractStructuredData.mockResolvedValue({
@@ -47,8 +80,8 @@ describe('POST /documents', () => {
       unreadableReason: null,
       docType: 'receipt',
       summary: 'A coffee shop receipt for $4.50.',
-      fields: { vendor_name: 'Blue Bottle', total_amount: 4.5, currency: 'USD' },
-      lowConfidenceFields: [],
+      documentText: 'Blue Bottle Coffee — Total: $4.50',
+      fields: [field('vendor_name', 'Blue Bottle', { quote: 'Blue Bottle Coffee' }), field('total_amount', 4.5), field('currency', 'USD')],
     });
 
     const res = await request(app)
@@ -62,7 +95,10 @@ describe('POST /documents', () => {
     expect(res.status).toBe(201);
     expect(res.body.status).toBe('done');
     expect(res.body.docType).toBe('receipt');
-    expect(res.body.fields.vendor_name).toBe('Blue Bottle');
+    expect(res.body.documentText).toBe('Blue Bottle Coffee — Total: $4.50');
+    const vendor = res.body.fields.find((f) => f.key === 'vendor_name');
+    expect(vendor.value).toBe('Blue Bottle');
+    expect(vendor.quote).toBe('Blue Bottle Coffee');
     expect(res.body.fileData).toBeUndefined(); // never leaks raw bytes in the JSON response
   });
 
@@ -84,8 +120,8 @@ describe('POST /documents', () => {
       unreadableReason: 'The image is entirely blank.',
       docType: 'other',
       summary: '',
-      fields: {},
-      lowConfidenceFields: [],
+      documentText: '',
+      fields: [],
     });
 
     const res = await request(app)
@@ -95,7 +131,7 @@ describe('POST /documents', () => {
     expect(res.status).toBe(201);
     expect(res.body.unreadable).toBe(true);
     expect(res.body.docType).toBeNull();
-    expect(Object.keys(res.body.fields)).toHaveLength(0);
+    expect(res.body.fields).toHaveLength(0);
   });
 
   test('rejects unsupported file types with 415 and a helpful message', async () => {
@@ -138,8 +174,8 @@ describe('GET/DELETE /documents', () => {
       unreadableReason: null,
       docType: 'invoice',
       summary: 'Invoice #123 for $500.',
-      fields: { invoice_number: '123', total_amount: 500 },
-      lowConfidenceFields: [],
+      documentText: 'Invoice #123, total $500',
+      fields: [field('invoice_number', '123'), field('total_amount', 500)],
       ...overrides,
     });
     const res = await request(app)
@@ -163,7 +199,21 @@ describe('GET/DELETE /documents', () => {
     const created = await seedOne();
     const res = await request(app).get(`/documents/${created._id}`);
     expect(res.status).toBe(200);
-    expect(res.body.fields.invoice_number).toBe('123');
+    expect(res.body.fields.find((f) => f.key === 'invoice_number').value).toBe('123');
+  });
+
+  test('flags which fields are new to the dataset, computed at read time', async () => {
+    const first = await seedOne({ fields: [field('invoice_number', '123')] });
+    // Second document shares "invoice_number" but introduces "vendor_name".
+    const second = await seedOne({ fields: [field('invoice_number', '124'), field('vendor_name', 'Acme')] });
+
+    const res = await request(app).get(`/documents/${second._id}`);
+    expect(res.body.newFieldKeys).toEqual(['vendor_name']);
+
+    // The first document, read after the second exists, has nothing new
+    // relative to it (invoice_number was already present elsewhere).
+    const firstAgain = await request(app).get(`/documents/${first._id}`);
+    expect(firstAgain.body.newFieldKeys).toEqual([]);
   });
 
   test('404s for a missing document id', async () => {
@@ -194,6 +244,66 @@ describe('GET/DELETE /documents', () => {
   });
 });
 
+describe('PATCH /documents/:id/fields/:key', () => {
+  async function seedOne(overrides = {}) {
+    extractStructuredData.mockResolvedValue({
+      unreadable: false,
+      unreadableReason: null,
+      docType: 'invoice',
+      summary: 'Invoice #123 for $500.',
+      documentText: 'Invoice #123, total $500',
+      fields: [field('invoice_number', '123'), field('discount_pct', '4%', { needsReview: true, reviewNote: 'ambiguous', reviewActions: ['Keep 4%', 'Keep flat amount'] })],
+      ...overrides,
+    });
+    const res = await request(app)
+      .post('/documents')
+      .send({ filename: 'invoice.txt', mimeType: 'text/plain', dataBase64: Buffer.from('Invoice #123, total $500').toString('base64') });
+    return res.body;
+  }
+
+  test('confirms a flagged field with a chosen resolution, clearing needsReview', async () => {
+    const created = await seedOne();
+    const res = await request(app)
+      .patch(`/documents/${created._id}/fields/discount_pct`)
+      .send({ value: '496.00', resolvedAction: 'Keep flat amount' });
+
+    expect(res.status).toBe(200);
+    const patched = res.body.fields.find((f) => f.key === 'discount_pct');
+    expect(patched.value).toBe('496.00');
+    expect(patched.resolvedAction).toBe('Keep flat amount');
+    expect(patched.confirmed).toBe(true);
+    expect(patched.needsReview).toBe(false);
+
+    // fieldIndex and searchableText must reflect the patched value too —
+    // they're derived, but derived data that goes stale is worse than none.
+    const again = await request(app).get(`/documents/${created._id}`);
+    expect(again.body.fieldIndex.discount_pct).toBe('496.00');
+  });
+
+  test('confirming without changing the value just clears needsReview', async () => {
+    const created = await seedOne();
+    const res = await request(app).patch(`/documents/${created._id}/fields/discount_pct`).send({});
+
+    expect(res.status).toBe(200);
+    const patched = res.body.fields.find((f) => f.key === 'discount_pct');
+    expect(patched.value).toBe('4%'); // unchanged
+    expect(patched.confirmed).toBe(true);
+    expect(patched.needsReview).toBe(false);
+  });
+
+  test('404s for an unknown field key', async () => {
+    const created = await seedOne();
+    const res = await request(app).patch(`/documents/${created._id}/fields/not_a_real_key`).send({ confirmed: true });
+    expect(res.status).toBe(404);
+  });
+
+  test('404s for an unknown document id', async () => {
+    const fakeId = new mongoose.Types.ObjectId().toString();
+    const res = await request(app).patch(`/documents/${fakeId}/fields/discount_pct`).send({ confirmed: true });
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('GET /query', () => {
   test('falls back to keyword search when smart search is not configured', async () => {
     extractStructuredData.mockResolvedValue({
@@ -201,15 +311,18 @@ describe('GET /query', () => {
       unreadableReason: null,
       docType: 'invoice',
       summary: 'Invoice for Acme Corp, total $500.',
-      fields: { vendor_name: 'Acme Corp', total_amount: 500 },
-      lowConfidenceFields: [],
+      documentText: 'Acme Corp invoice, total $500',
+      fields: [field('vendor_name', 'Acme Corp'), field('total_amount', 500)],
     });
     await request(app)
       .post('/documents')
       .send({ filename: 'acme.txt', mimeType: 'text/plain', dataBase64: Buffer.from('Acme Corp invoice, total $500').toString('base64') });
 
-    // No ANTHROPIC_API_KEY in the test env, so smart mode should gracefully
-    // fall back to keyword search rather than 500ing.
+    // Simulate "smart search unavailable" deterministically (see the
+    // jest.mock comment above for why this isn't left to depend on whether
+    // ANTHROPIC_API_KEY happens to be set in the environment).
+    buildSmartQuery.mockRejectedValue(new ExtractionConfigError('ANTHROPIC_API_KEY is not set.'));
+
     const res = await request(app).get('/query').query({ q: 'Acme' });
     expect(res.status).toBe(200);
     expect(res.body.modeUsed).toBe('keyword');

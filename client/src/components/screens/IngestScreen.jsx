@@ -1,3 +1,5 @@
+import { useRef, useState } from 'react';
+
 function QueueRow({ item, onOpen }) {
   const rowClass = `queue-row${item.status === 'pending' ? ' is-pending' : ''}${item.status === 'failed' ? ' is-failed' : ''}`;
   const tagClass = item.status === 'failed' ? 'tag tag-outline' : item.status === 'pending' ? 'tag tag-neutral' : 'tag tag-accent';
@@ -45,7 +47,22 @@ function QueueRow({ item, onOpen }) {
   );
 }
 
+// The design prototype's dropzone was decorative (clicking it just jumped
+// to a fixed demo screen). Real Ingest needs an actual file picker and real
+// drag-and-drop — `ingest.onFiles`, when present, is what makes that real;
+// its absence (the demo engine never sets it) keeps the original
+// click-to-demo behavior working unchanged for demo-only scenarios.
 export default function IngestScreen({ ingest }) {
+  const fileInputRef = useRef(null);
+  const [dragActive, setDragActive] = useState(false);
+  const hasRealUpload = typeof ingest.onFiles === 'function';
+
+  const openPicker = () => {
+    if (ingest.dropDisabled) return;
+    if (hasRealUpload) fileInputRef.current?.click();
+    else ingest.addDoc();
+  };
+
   return (
     <>
       <div className="ingest-header">
@@ -53,15 +70,40 @@ export default function IngestScreen({ ingest }) {
           <h6>Ingest</h6>
           <h3>Drop anything in. We work out the shape.</h3>
         </div>
-        <button type="button" className="btn btn-primary" onClick={ingest.addDoc}>
+        <button type="button" className="btn btn-primary" onClick={openPicker}>
           <i className="ph ph-plus" />Add document
         </button>
       </div>
 
       <div className="ingest-body">
+        {hasRealUpload && (
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            hidden
+            accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.md,.csv,.json,.log,application/pdf,image/*,text/*"
+            onChange={(e) => {
+              if (e.target.files.length) ingest.onFiles(Array.from(e.target.files));
+              e.target.value = '';
+            }}
+          />
+        )}
         <div
-          className={`dropzone${ingest.dropDisabled ? ' is-disabled' : ''}`}
-          onClick={ingest.dropDisabled ? undefined : ingest.addDoc}
+          className={`dropzone${ingest.dropDisabled ? ' is-disabled' : ''}${dragActive ? ' is-drag-active' : ''}`}
+          onClick={openPicker}
+          onDragOver={(e) => {
+            if (!hasRealUpload || ingest.dropDisabled) return;
+            e.preventDefault();
+            setDragActive(true);
+          }}
+          onDragLeave={() => setDragActive(false)}
+          onDrop={(e) => {
+            if (!hasRealUpload || ingest.dropDisabled) return;
+            e.preventDefault();
+            setDragActive(false);
+            if (e.dataTransfer.files.length) ingest.onFiles(Array.from(e.dataTransfer.files));
+          }}
         >
           <i className="ph ph-tray-arrow-down dropzone-icon" />
           <div className="dropzone-title">Drop PDFs, scans, emails, spreadsheets</div>

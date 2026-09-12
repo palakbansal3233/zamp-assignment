@@ -65,14 +65,15 @@ export default function ReviewScreen({ review }) {
 
       <div className="review-body">
         <div className="review-pane is-left">
-          {!review.readable && (
+          {review.docLoading && <p className="text-muted" style={{ padding: 'var(--space-8)' }}>Loading document…</p>}
+          {!review.docLoading && !review.readable && (
             <div className="doc-unreadable">
               <i className="ph ph-file-dashed" />
               <div className="doc-unreadable-title">{review.unreadableTitle}</div>
               <div className="doc-unreadable-text">{review.unreadableText}</div>
             </div>
           )}
-          {review.readable && (
+          {!review.docLoading && review.readable && (
             <div className="doc-surface">
               {review.docLines.map((line, i) => <DocLine key={i} line={line} />)}
               {review.truncated && <div className="doc-truncated-note">{review.truncatedNote}</div>}
