@@ -12,12 +12,16 @@ const config = {
   // raw bytes by ~4/3, and we wrap the payload in a small JSON envelope, so
   // we cap the *original* file well under that line to leave headroom.
   maxFileBytes: parseInt(process.env.MAX_FILE_BYTES || String(4 * 1024 * 1024), 10),
-  // How long we'll let a single extraction call run before giving up and
-  // reporting a clear error, rather than hanging until the platform kills
-  // the function with an opaque timeout. Raised from 25s once extraction
-  // started also returning a full document transcription (see
-  // services/extraction.js) — a bigger, streamed response takes longer.
+  // How long we'll let a single *chunk's* model call run before giving up
+  // with a clear error rather than hanging until the platform kills the
+  // function. This bounds one chunk, not one document — a long document is
+  // read across several requests (see documentsController#runExtractionChunks).
   extractionTimeoutMs: parseInt(process.env.EXTRACTION_TIMEOUT_MS || '45000', 10),
+  // How much wall-clock one upload/resume request will spend reading chunks
+  // before returning what it has and letting the client resume. Deliberately
+  // well under any plausible serverless request ceiling: the point is that
+  // the document's length stops being coupled to the platform's patience.
+  requestChunkBudgetMs: parseInt(process.env.REQUEST_CHUNK_BUDGET_MS || '30000', 10),
   // Same idea, for the /ask endpoint's grounded-answer call — kept as its
   // own knob since the corpus-digest prompt has different size/latency
   // characteristics than a single document's extraction.

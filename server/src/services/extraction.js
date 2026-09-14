@@ -143,15 +143,24 @@ function normalizeFields(rawFields) {
     const key = f.key.trim();
     if (seen.has(key)) continue; // first occurrence wins on a duplicate key
     seen.add(key);
+    // A review flag is only kept if it comes with a reason. "This needs
+    // checking" with no explanation isn't something a person can act on —
+    // it just adds a warning badge and a Confirm button to a value they
+    // now trust slightly less, for reasons nobody will ever tell them.
+    // The uncertainty itself isn't lost: it's still in the confidence
+    // score the UI shows regardless.
+    const reviewNote = typeof f.review_note === 'string' && f.review_note.trim() ? f.review_note.trim() : null;
+    const needsReview = Boolean(f.needs_review) && Boolean(reviewNote);
+
     out.push({
       key,
       label: typeof f.label === 'string' && f.label.trim() ? f.label.trim() : humanizeKey(key),
       value: f.value === undefined ? null : f.value,
       quote: typeof f.quote === 'string' ? f.quote : '',
       confidence: clampConfidence(f.confidence),
-      needsReview: Boolean(f.needs_review),
-      reviewNote: f.needs_review && typeof f.review_note === 'string' ? f.review_note : null,
-      reviewActions: f.needs_review && Array.isArray(f.review_actions) ? f.review_actions.filter((a) => typeof a === 'string').slice(0, 3) : [],
+      needsReview,
+      reviewNote: needsReview ? reviewNote : null,
+      reviewActions: needsReview && Array.isArray(f.review_actions) ? f.review_actions.filter((a) => typeof a === 'string').slice(0, 3) : [],
       confirmed: false,
       resolvedAction: null,
       sensitive: Boolean(f.sensitive),
@@ -173,20 +182,28 @@ function normalizeFields(rawFields) {
 async function extractStructuredData(input) {
   const anthropic = getClient();
 
+  // When a long document is being read in chunks, the model needs to know
+  // it's looking at a slice — otherwise page 7 of a rental agreement, with
+  // no title block and no parties named on it, reads as an unlabelled
+  // fragment and comes back "unreadable" or misclassified.
+  const chunkNote = input.chunkContext
+    ? `\n\nNOTE: this is ${input.chunkContext.label || `part ${input.chunkContext.index + 1} of ${input.chunkContext.total}`} of a longer document. Extract only what this part actually contains — don't infer the parts you can't see, and don't mark it unreadable merely because it lacks a heading or context that would appear elsewhere in the document.`
+    : '';
+
   const content = [];
   if (input.kind === 'text') {
     content.push({
       type: 'text',
-      text: `Filename: ${input.filename}\n\nDocument content:\n\n${input.text}`,
+      text: `Filename: ${input.filename}${chunkNote}\n\nDocument content:\n\n${input.text}`,
     });
   } else if (input.kind === 'image') {
-    content.push({ type: 'text', text: `Filename: ${input.filename}` });
+    content.push({ type: 'text', text: `Filename: ${input.filename}${chunkNote}` });
     content.push({
       type: 'image',
       source: { type: 'base64', media_type: input.mimeType, data: input.buffer.toString('base64') },
     });
   } else if (input.kind === 'pdf') {
-    content.push({ type: 'text', text: `Filename: ${input.filename}` });
+    content.push({ type: 'text', text: `Filename: ${input.filename}${chunkNote}` });
     content.push({
       type: 'document',
       source: { type: 'base64', media_type: 'application/pdf', data: input.buffer.toString('base64') },

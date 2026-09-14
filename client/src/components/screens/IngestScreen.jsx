@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { SAMPLE_DOCUMENTS } from '../../sampleDocuments';
 
 function QueueRow({ item, onOpen }) {
   const rowClass = `queue-row${item.status === 'pending' ? ' is-pending' : ''}${item.status === 'failed' ? ' is-failed' : ''}`;
@@ -96,7 +97,7 @@ export default function IngestScreen({ ingest }) {
             type="file"
             multiple
             hidden
-            accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.md,.csv,.json,.log,application/pdf,image/*,text/*"
+            accept=".pdf,.docx,.png,.jpg,.jpeg,.webp,.gif,.txt,.md,.csv,.json,.log,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/*,text/*"
             onChange={(e) => {
               if (e.target.files.length) ingest.onFiles(Array.from(e.target.files));
               e.target.value = '';
@@ -121,9 +122,28 @@ export default function IngestScreen({ ingest }) {
           }}
         >
           <i className="ph ph-tray-arrow-down dropzone-icon" />
-          <div className="dropzone-title">Drop PDFs, scans, emails, spreadsheets</div>
+          <div className="dropzone-title">Drop a PDF, Word doc, photo, scan, or text file</div>
           <div className="dropzone-note text-muted">{ingest.dropNote}</div>
         </div>
+
+        {/* Only while there's nothing to look at — once you have your own
+            documents, sample chips are clutter. */}
+        {ingest.onSample && ingest.items.length === 0 && (
+          <div className="sample-row">
+            <span className="sample-row__label text-muted">Nothing to hand? Try one:</span>
+            {SAMPLE_DOCUMENTS.map((sample) => (
+              <button
+                key={sample.filename}
+                type="button"
+                className="sample-chip"
+                title={`Read a sample ${sample.label.toLowerCase()} to see how this works`}
+                onClick={() => ingest.onSample(sample)}
+              >
+                {sample.label}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="queue-heading-row">
           <h6>Queue</h6>

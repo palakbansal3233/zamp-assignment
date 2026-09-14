@@ -35,9 +35,33 @@ function confidenceColor(conf) {
   return 'var(--color-neutral-500)';
 }
 
+function humanizeKey(key) {
+  return String(key).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// Compound values (a prescription's medication list, an invoice's line
+// items) are genuinely nested — but the person reading this is trying to
+// find out what to take and when, and `JSON.stringify` is not an answer to
+// that question. Render nested values as readable lines instead.
+function formatOneValue(value) {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value !== 'object') return String(value);
+  if (Array.isArray(value)) return value.map(formatOneValue).join(', ');
+  return Object.entries(value)
+    .filter(([, v]) => v !== null && v !== undefined && v !== '')
+    .map(([k, v]) => `${humanizeKey(k)}: ${typeof v === 'object' ? formatOneValue(v) : v}`)
+    .join(' · ');
+}
+
 function formatFieldValue(value) {
-  if (value === null || value === undefined) return '—';
-  if (typeof value === 'object') return JSON.stringify(value);
+  if (value === null || value === undefined || value === '') return '—';
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '—';
+    // One entry per line — a list of three medicines should read as three
+    // things, not one run-on string.
+    return value.map(formatOneValue).join('\n');
+  }
+  if (typeof value === 'object') return formatOneValue(value);
   return String(value);
 }
 
@@ -153,14 +177,40 @@ export function useSift() {
     }
   }, [pushToast]);
 
+  // A long document comes back from the upload still `processing`, with
+  // however much was read so far already saved. Keep asking it to continue
+  // until it's finished — each call is another bounded slice of reading,
+  // and each one lands real, visible progress. The guard is there so a
+  // server that somehow never advances can't spin the browser forever.
+  const resumeUntilDone = useCallback(async (id) => {
+    let current = null;
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      current = await api.resumeDocument(id);
+      setDocuments((prev) => prev.map((d) => (d._id === id ? current : d)));
+      if (current.status !== 'processing') break;
+    }
+    return current;
+  }, []);
+
   // ---- uploads ----
   const runUpload = useCallback(
     async (filename, factory) => {
       const tempId = `${filename}-${Date.now()}-${Math.random()}`;
       setInFlight((prev) => [...prev, { tempId, filename }]);
       try {
-        const created = await factory();
+        let created = await factory();
         setDocuments((prev) => [created, ...prev]);
+        if (created.status === 'processing') {
+          try {
+            created = (await resumeUntilDone(created._id)) || created;
+          } catch (err) {
+            // Reading stopped partway. What was already read is saved and
+            // visible; the row offers Retry. Don't throw the whole upload
+            // away over it.
+            pushToast(`"${filename}" was partly read — ${err.message}`, 'warning');
+          }
+        }
         refreshSuggestions();
         return created;
       } catch (err) {
@@ -180,7 +230,7 @@ export function useSift() {
         setInFlight((prev) => prev.filter((u) => u.tempId !== tempId));
       }
     },
-    [refreshSuggestions]
+    [refreshSuggestions, resumeUntilDone, pushToast]
   );
 
   const handleFiles = useCallback(
@@ -352,6 +402,19 @@ export function useSift() {
   const demoMode = DEMO_SCENARIO_IDS.has(scen);
 
   const queueItems = documents.map((d) => {
+    // A long document that's mid-read: report where it actually is, not a
+    // decorative animation. `unit` tells us whether that's pages or parts.
+    if (d.status === 'processing' && d.extraction?.totalChunks > 1) {
+      const { completedChunks = 0, totalChunks = 1, unit } = d.extraction;
+      const noun = unit === 'page' ? 'page group' : 'part';
+      return {
+        id: d._id, name: d.filename, kind: 'Reading…', icon: iconForDocType(d.docType), clickable: true,
+        sub: d.summary || 'Reading this document in parts — everything read so far is already saved.',
+        status: 'pending',
+        pct: Math.round((completedChunks / totalChunks) * 100),
+        stage: `${noun} ${completedChunks} of ${totalChunks}`,
+      };
+    }
     if (d.status === 'error') {
       return {
         id: d._id, name: d.filename, kind: 'Extraction failed', icon: 'ph ph-file-x', clickable: false,
@@ -375,6 +438,7 @@ export function useSift() {
   const realIngest = {
     addDoc: () => {},
     onFiles: handleFiles,
+    onSample: (sample) => runUpload(sample.filename, () => api.uploadRawText(sample.filename, sample.text)),
     dropDisabled: false,
     dropNote: 'No schema needed — fields are inferred per document and merged into the dataset',
     readyLabel: `${documents.filter((d) => d.status === 'done').length} ready${inFlight.length ? ` · ${inFlight.length} reading` : ''}`,

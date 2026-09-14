@@ -1,295 +1,159 @@
 # decisions.md
 
-A running log of the real calls made building this, in roughly the order they came up. Written for whoever reads this after the fact — including me in six months.
+The real calls I made building **Sift**, and why. Organised against the things you said you'd evaluate.
 
 ---
 
-## 1. Which problem, and what "messy documents" means here
+## 1. Problem framing
 
-**Decision:** Picked "Turn messy documents into structured, queryable data," scoped to *generic, unknown-ahead-of-time* documents — not a fixed domain like invoices-only. A document can be a clean digital PDF, a phone photo of a receipt, a scanned form, a scribbled note, a resume, or something I haven't thought of. The system doesn't get told what kind of document is coming.
+**The brief:** turn unstructured or semi-structured documents into clean, structured, queryable data.
 
-**Alternatives considered:** Scoping to one domain (invoices, or resumes) would have let me build a tighter, more polished single-purpose tool with a fixed schema and nicer domain-specific UI (line-item tables, resume timeline view, etc.).
+**How I read it.** The hard word in that sentence is *unstructured*. There are two ways to satisfy the brief:
 
-**Reasoning:** The domain-specific version is the "safe" build — it's impressive if you've seen a hundred invoice-parsers, less so if you haven't, and it dodges the actual hard part of the problem statement ("messy *or* semi-structured," genuinely unknown structure). The generic version forces the real design problem: a schema you don't know in advance, storage that doesn't assume a shape, and a search experience that has to work across heterogeneous data. That's the part I wanted to be judged on.
+- **Pick one document type** (invoices, say), hard-code a schema for it, and extract against that schema. Reliable, demoable, and — for anyone who's seen a few invoice parsers — unremarkable. It also quietly deletes the actual problem: if you already know the schema, the document was never really unstructured.
+- **Accept that you don't know what's coming.** No schema, no template, no document-type list. Infer the shape per document and merge the results into one dataset you can query across.
 
-**What this costs:** No domain-specific UI (no invoice line-item table, no resume timeline). The tradeoff is explicit and deliberate — see §9.
+I took the second, and everything downstream follows from it: a `fields` array of self-describing descriptors rather than typed columns, a text index built by flattening whatever came back, search that's grounded in the field keys actually observed rather than a fixed set.
 
----
+**What that cost me, deliberately:** no per-type UI (no invoice line-item table, no resume timeline). A domain-specific build would look more finished in a screenshot. I'd rather be judged on the part that's hard.
 
-## 2. Extraction approach: LLM with forced structured output, not regex/rules
+**Scoped out, on purpose:**
 
-**Decision:** Every document — text, image, or PDF — goes to Claude (Anthropic API) through a single tool call (`record_extraction`) with a JSON schema, using `tool_choice: {type: "tool", name: "record_extraction"}` to *force* the response through that schema. There is no `JSON.parse()` anywhere in this codebase parsing freeform model text, and no regex stripping markdown fences.
-
-**Alternatives considered:**
-- **Rule-based/regex parsing per document type.** Free, deterministic, no API dependency. Rejected because it's the opposite of what "messy, unknown-in-advance documents" needs — a regex for invoices tells you nothing about a handwritten note, and you're back to needing to know the domain ahead of time (see §1).
-- **Prompting the model to "return JSON" in prose and parsing the response text.** This is the common lazy version of LLM extraction, and it's genuinely bad in practice — models wrap JSON in markdown fences, add a sentence before it, sometimes emit near-JSON. Forcing a tool call sidesteps that whole failure class structurally, not with a parser.
-
-**Reasoning:** This is the actual hard sub-problem in this project, and I wanted to solve it properly rather than route around it. The schema itself also carries an honesty contract: `unreadable` / `unreadable_reason` gives the model an explicit way to say "I can't read this" instead of being implicitly pressured to invent plausible-looking fields, and `low_confidence_fields` lets it surface uncertainty (illegible handwriting, ambiguous formatting) instead of presenting every field with false uniform confidence. See `server/src/services/extraction.js`.
-
-**What I cut:** No self-consistency checks (e.g. running extraction twice and diffing). One model call per document, trusted as-is. For a 1-shot assignment, running each document twice to catch model flakiness was a cost/complexity I didn't think was worth it — the honesty fields do most of the useful work cheaply.
-
----
-
-## 3. PDFs: Claude's native PDF support, not a rasterization pipeline
-
-**Decision:** PDFs are sent to Claude directly as a `document` content block (base64), the same call used for images. No `pdf-parse`, no PDF-to-image conversion, no OCR library.
-
-**Alternatives considered:** My first plan (before checking what the API actually supports) was: use `pdf-parse` to pull the text layer, and if the PDF has no text layer (i.e. it's a scan), treat scanned PDFs as unsupported and tell the user to export a photo instead. I'd essentially decided to *cut* scanned-PDF support because rasterizing PDF pages inside a Netlify Function (no system `poppler`/`ghostscript` binary available) is a real, ugly infra problem.
-
-**Reasoning I changed course on:** Claude's Messages API accepts PDFs as a native document input and reads each page directly (including scanned/image-only pages), the same underlying capability as image input. That collapses "text PDF," "scanned PDF," and "photo of a document" into one code path with one dependency (the Anthropic SDK, which I already need). It also means the "hard sub-problem" (documents that mix printed and handwritten content, or are scanned rather than born-digital) gets *actually solved* rather than gracefully declined. This is the single biggest reason the extraction pipeline is as simple as it is — see `server/src/services/fileTypes.js` for the resulting 3-way split (text / image / pdf).
-
-**What this costs:** No `pdf-parse`-based fast path for pure-text PDFs (would've been cheaper/faster than a vision-capable call for the common case). I didn't think that optimization was worth a second code path for this build. Also means every PDF page counts against Claude's per-request size/page limits — mitigated by the file-size cap in §7, which keeps documents small enough that this isn't a practical concern here.
+| Left out | Why |
+|---|---|
+| Auth / multi-user | Orthogonal, well-understood, would have eaten the time this project's actual problem deserved. One user, one corpus. |
+| Vector DB / embeddings / RAG retrieval | The corpus is *already structured* — extraction did that work. Grounding answers in extracted fields is more precise than re-embedding text I've already parsed, at this scale. Revisit if "find documents about a similar topic" ever becomes a requirement. |
+| Background job queue | See §2 — the person this is for uploads one document that matters and watches it land. Durable queue infra buys them nothing. |
+| Cross-document entity resolution | Conflict detection works when two documents use the *same* field key. Recognising that `price_escalator_note` and `price_cap_percentage` describe the same fact is a genuinely different (and much larger) problem. Named, not hidden — see §9. |
+| `.doc`, video, audio, archives | Outside what the persona actually holds. `.doc` gets a specific "save as .docx or PDF" message rather than a generic rejection, because it's the likeliest near-miss. |
 
 ---
 
-## 4. Supported file types, and what's explicitly out of scope
+## 2. Product thinking — who this is for
 
-**Decision:** PDF, images (PNG/JPEG/WEBP/GIF), and plain text (TXT/MD/CSV/JSON/LOG). Anything else — most notably `.docx`/`.doc` — gets a clear `415` with an explanit message ("export or print to PDF first") rather than a silent failure or a confusing crash somewhere downstream. See `classifyFile()` in `server/src/services/fileTypes.js`.
+**Not** an enterprise document pipeline. **Not** a finance team processing 500 invoices a day. Those people have a schema and a vendor.
 
-**Reasoning:** `.docx` parsing needs another library (`mammoth` or similar) for a format users can trivially work around (every word processor can export/print to PDF, which the pipeline already handles well). Given the "no unnecessary libraries" constraint, this was an easy, deliberate cut — the alternative path (export to PDF) is genuinely not much user friction, and the failure mode is explicit and actionable instead of silent.
+This is for **the person holding a document that matters, which they can't fully read.**
 
----
+Concretely, the same person in three different weeks:
 
-## 5. Storage: one Mongo collection, dynamic schema, not per-type collections or a vector DB
+- A **12-page rental agreement** they're about to sign. They need to know the deposit, the notice period, and whether they can sublet — buried in clause 8 of something written to be skimmed past.
+- A **prescription in a doctor's handwriting** they need to relay to a friend picking up the medicines. They need the drug and the dose, they need to know which words the machine wasn't sure about, and they'd rather not paste someone's health details into a group chat unwarned.
+- An **invoice** they need to check before paying.
 
-**Decision:** A single `Document` collection in MongoDB. The extracted structured data lives in one `fields` field typed as `Schema.Types.Mixed` — an arbitrarily-shaped object, whatever the model returned.
+Those three documents share *nothing* structurally. That's the point — and it's why the schema-agnostic framing in §1 is the right product call rather than a cop-out. A tool that only works once you've told it what kind of document you have is useless to someone holding whatever arrived in the post.
 
-**Alternatives considered:**
-- **A collection (or fixed schema) per document type** (`invoices`, `resumes`, ...). Rejected — the whole premise here is the document type isn't known ahead of time, so this would mean either guessing at a fixed set of types up front (contradicts §1) or dynamically creating collections/schemas at runtime, which is a lot of moving parts for marginal benefit.
-- **A vector database**, for semantic search over document content. Rejected for this build: the query patterns needed (filter by a specific field like `total_amount >= 500`, or keyword match) are relational/text, not semantic-similarity search, and running two datastores (Mongo for the record + a vector store for search) for a project this size wasn't worth the operational complexity. If "find documents about a similar topic" were a real requirement, this would be the first thing I'd revisit.
+What that person actually needs, in priority order:
 
-**Reasoning:** Mixed/dynamic storage is the honest reflection of "we don't know the schema." The cost is that you can't put a normal index on `fields.total_amount` (it's an unpredictable path), which is exactly why search works the way it does — see §8.
+1. **The facts pulled out** without being asked to define what "the facts" are.
+2. **A way to check the machine's work** before acting on it — because they're about to sign, pay, or administer something.
+3. **Honesty about uncertainty.** Handwriting is genuinely ambiguous. "I read this as 500mg but it could be 50mg" is useful; a confident wrong number is harmful.
+4. **A warning before they forward it.** Prescriptions and agreements carry details that shouldn't casually leave your hands.
 
----
+Every feature below traces back to one of those four. Anything that didn't, I didn't build.
 
-## 6. Original file bytes live in MongoDB, not S3/Cloudinary
-
-**Decision:** The uploaded file's raw bytes are stored as a `Buffer` field directly on the `Document` record (capped by the same size limit as upload — see §7), served back via `GET /documents/:id/file` with the right `Content-Type`.
-
-**Alternatives considered:** Object storage (S3, Cloudinary, Netlify Blobs) is the "correct" answer at real scale — you don't want binary blobs bloating your primary database.
-
-**Reasoning:** For this project's actual scale (a handful to a few hundred demo documents, each capped at a few MB), adding a second storage service and its credentials/config was complexity with no real payoff, and it's one more thing to explain in a setup README for someone grading this at 11pm. Storing the bytes alongside the record also means the "original vs. extracted" comparison in the UI (a real trust feature — let the user check our work) needed zero extra plumbing. If this needed to scale past a demo, this is the first thing I'd swap for object storage.
+**The volume assumption is load-bearing.** Low-frequency, high-stakes — one document at a time, watched. That single fact is why synchronous processing is *correct* here rather than a compromise, and why I spent the infrastructure budget on making long documents work instead of on a queue.
 
 ---
 
-## 7. Hosting split: Netlify Functions + MongoDB Atlas, one deploy target
+## 3. UX decisions
 
-**Decision:** Netlify hosts both the static React build *and* the API, via one Express app wrapped with `serverless-http` as a Netlify Function (`netlify/functions/api.js`), redirected from `/api/*`. Data lives in MongoDB Atlas (free tier). The exact same Express app (`server/src/app.js`) also runs locally via plain `app.listen()` — see `server/src/index.js` — so there's one codebase, one set of route definitions, and no behavioral drift between "what I tested locally" and "what's deployed."
+**Click a field, see where it came from.** The Review screen highlights the exact span of source text behind each extracted value. This is the answer to need #2 — she can verify the deposit amount against the actual clause before signing. It's a real substring match against the model's own transcription; a quote that doesn't actually appear simply doesn't highlight, and nothing breaks.
 
-**Alternatives considered:** A separate long-running backend host (Render/Railway free tier) for a "real" persistent Express server, with only the frontend on Netlify.
+**Uncertainty is a first-class field property, not a footnote.** Each field carries a confidence, and an ambiguous one carries a note *and the concrete readings to choose between* — on the sample agreement, which states the deposit as 2,175.00 in clause 4 and 2,750.00 in Schedule A, that's "these figures conflict" plus a button for each. Confirming records which reading a human picked. It deliberately does **not** parse a new value out of the button label: recording *what the person chose* is honest, guessing what that implies numerically is not.
 
-**Reasoning:** One deploy target, one URL, one place to set environment variables — much simpler to hand someone a link and have it just work, and much simpler to reason about for a 1-person, short-timeline build. The real tradeoff is serverless constraints (see §7a–c below), which is a fair trade for the simplicity here.
+**A review flag without a reason is dropped.** The model sometimes marks a field uncertain and says nothing about why. Surfacing that is a warning badge and a Confirm button attached to a value the person now trusts less, for reasons nobody will ever tell them. The uncertainty isn't lost — it's still the confidence score — but the flagged set stays meaningful: everything flagged has a real reason and real options.
 
-### 7a. File size cap: Netlify's synchronous function payload limit
+**Two sample documents, one click, in the empty state.** Nobody should have to go find a rental agreement to discover whether this works. The samples are chosen to exercise the hard parts rather than to look tidy: the agreement contradicts itself about the deposit, and the prescription (`TDS x 7/7`, `2 puffs PRN, max QDS`) carries an NHS number and a date of birth — so the decoding, the review flow, and the sensitivity warning all fire on first contact.
 
-**Decision:** Uploads are capped at 4MB (`MAX_FILE_BYTES`, `server/src/config.js`), enforced both client-side (immediate feedback, no wasted upload) and server-side (defensive — never trust the client).
+**Ask cites, or it refuses.** Answers name the exact documents and fields they're grounded in. If nothing supports an answer, it says so rather than producing something plausible. For someone asking "what's my notice period" before serving notice, a wrong answer is worse than no answer.
 
-**Reasoning:** Netlify's synchronous Functions have a ~6MB request body ceiling. The upload payload is base64 (≈1.33× the original bytes) plus a small JSON envelope, so 4MB of original file comfortably clears that with headroom. This is a real constraint of the hosting choice in §7, surfaced honestly in the UI rather than discovered as a cryptic 502.
+**Sensitive fields warn before they travel.** Extraction flags what shouldn't be casually shared; Review shows a standing notice, and Ask cautions when an answer draws on one. Directly serving need #4 — the prescription-to-a-friend case.
 
-### 7b. Upload payload as base64 JSON, not multipart/form-data
+**Progress that means something.** A long document reports "page group 3 of 4", not a decorative animation — because it's genuinely reading in parts and each one is genuinely saved.
 
-**Decision:** The client reads the file with `FileReader`, sends `{ filename, mimeType, dataBase64 }` as a JSON body. No `multer`, no multipart parsing on the server.
+**Honest empty and failure states.** "No document selected" is a different message from "this document was unreadable", which is different again from "we couldn't reach the server", which is different from a real 404 for a document that was deleted. These all rendered identically at one point; they don't now. Actions that used to fail silently now say so.
 
-**Reasoning:** `multipart/form-data` through AWS-Lambda-style serverless functions (what Netlify Functions are under the hood) is a well-known pain point — binary body handling depends on the platform correctly detecting and base64-decoding the content type, and it's a frequent source of "works locally, breaks in prod" bugs. Sidestepping it entirely by doing the base64 encoding client-side removes a whole dependency (`multer`) and a whole class of environment-specific bugs, at the cost of the ~33% base64 size overhead already accounted for in §7a.
-
-### 7c. Serverless MongoDB connection caching
-
-**Decision:** `server/src/db/connect.js` caches the connection *promise* at module scope and checks `mongoose.connection.readyState` before reconnecting, with a small `maxPoolSize: 5`.
-
-**Reasoning:** Netlify Functions reuse warm Lambda containers between invocations. A naive `mongoose.connect()` called on every request would slowly leak connections across containers until Atlas's free-tier connection cap (500) is exhausted under any real traffic — a bug that's invisible in local dev (one process, one connection) and only shows up under concurrent serverless load. Caching the connection (and gating a fresh attempt behind a `.catch()` that resets the cache on failure, so a transient network blip doesn't wedge the app forever) handles this properly instead of hoping it doesn't come up.
+**The States panel is labelled.** The design includes a 15-scenario switcher. Six trigger genuine backend behaviour (a real oversized upload, a real blank scan, a real refusal). The rest need infrastructure I chose not to build (auth, billing, offline sync) and are tagged **(demo)** in the UI itself. Showing an offline banner I can't actually produce, without saying so, would be a lie told in pixels.
 
 ---
 
-## 8. Search: keyword baseline always works; natural-language search is a sanitized enhancement, not a leap of faith
+## 4. Code quality
 
-**Decision:** Two modes behind one endpoint (`GET /query`):
-- **Keyword** — a MongoDB `$text` index over a `searchableText` field, rebuilt on every save by recursively flattening the entire dynamic `fields` object (plus filename/docType/summary) into one string (`server/src/utils/flatten.js`). Works with zero external dependency, on any document shape.
-- **Smart** — a natural-language question ("invoices over $100 from Acme") goes to Claude, which returns *proposed* structured filters through the same forced-tool-call pattern as extraction (§2). Falls back to keyword automatically — silently, from the user's perspective, beyond a small explanatory note — if smart search errors, isn't configured (no API key), or returns filters that match nothing. The user never hits a dead end.
-
-**The part I actually want to highlight:** the model's proposed filters are **never** run against Mongo as-is. `sanitizeFilters()` in `server/src/services/queryBuilder.js` re-validates every proposed field against an explicit allowlist (`docType`/`summary`/`filename`, or `fields.<alphanumeric path>`) and every operator against a fixed map to real Mongo operators (`eq`/`gt`/`gte`/`lt`/`lte`/`contains`, the last regex-escaped before use). Anything outside that — a field like `$where`, an operator that isn't in the map, a value that's an object (which could otherwise smuggle in a Mongo operator like `{$gt: ""}`) — is silently dropped, not passed through. There's no `eval()`, no raw insertion of model output into a query anywhere in this codebase.
-
-**Alternatives considered:** The obvious shortcut is asking the model to just write the Mongo query (or a Mongo aggregation pipeline) and running it directly. Much less code. Rejected outright — a user-controlled natural-language string influencing a database query, mediated by an LLM that could itself be prompt-injected via document content it previously extracted (e.g. a document containing text designed to manipulate a future search), is exactly the shape of a NoSQL-injection vector. This is covered by dedicated tests in `server/test/queryBuilder.test.js` (rejecting `$where`-style fields, rejecting object/array values, rejecting unknown operators, capping filter count).
-
-**What I cut:** No pagination for search results (capped at 50, newest-first) — reasonable for a personal-document-library demo; would need real pagination at scale. No ranking/relevance blending between keyword and smart results — it's one mode or the other per query, not a merged score.
+- **One Express app, two runtimes.** `server/src/app.js` is mounted under `/api` locally and wrapped by `serverless-http` for Netlify. One set of routes, no drift between what I test and what deploys.
+- **Never trust model output — verify it.** The single most repeated pattern in this codebase. LLM-proposed search filters are re-validated against a field/operator allowlist before touching Mongo (`sanitizeFilters`). LLM-proposed citations are re-checked against real stored documents before being shown (`verifyCitations`). LLM-produced quotes are only trusted as far as `indexOf` confirms them. There is no `JSON.parse()` on model prose anywhere — every structured response comes back through forced tool-use.
+- **Derived data is rebuilt at its single write site.** `fieldIndex` (the flat shadow of `fields` that keeps search filtering simple) and `searchableText` are recomputed together, everywhere `fields` changes, with no exceptions. A denormalised field that can drift is worse than no denormalised field.
+- **One deliberate tradeoff worth naming:** filtering queries `fieldIndex.<key>` rather than `$elemMatch` against the `fields` array. `$elemMatch` is more "correct", but it would push real complexity into `sanitizeFilters` — the one function most worth keeping small and auditable — to support filtering on field *metadata* that search never used.
 
 ---
 
-## 9. Processing is synchronous, not a background job queue
+## 5. Tests
 
-**Decision:** `POST /documents` does the whole thing in one request/response: validate → classify → call Claude → save → return the finished record. No "processing" status the client has to poll for in practice (see below).
+**92 tests, and they're pointed at the things that would actually hurt.**
 
-**Alternatives considered:** Upload immediately, return `202 Accepted`, process in a background job, let the client poll or subscribe for status.
+- The query sanitizer, against injection attempts (`$where`, operator objects smuggled as values, prototype-ish paths).
+- Citation verification: a hallucinated document id, a field key that doesn't exist, a malformed citation — each dropped; and the rule that **zero surviving citations forces a refusal** rather than an ungrounded answer.
+- Chunk merging: that a confident later page **cannot** clear an earlier page's needs-review or sensitivity flag, that a signature page can't relabel a whole agreement, that "unreadable" only survives if nothing anywhere was read.
+- Resumability: one request reads one chunk under a zero budget, resume continues rather than restarting, a mid-document failure keeps everything already read.
+- Byte-for-byte file serving, upload validation, the full `/ask` flow.
 
-**Reasoning:** Netlify Functions have no durable queue to hand work off to — building one (SQS-alike + a poller, or a second service) is disproportionate infrastructure for a document-at-a-time assignment project. Synchronous keeps local and deployed behavior identical and the code simple.
+**Three bugs found because of testing, not despite it** — worth listing, because how a bug was found says more than a suite that was green from the start:
 
-**The tradeoff, stated plainly:** a large or multi-page document risks hitting the platform's function execution timeout, and the user's browser tab has to sit on an open request for however long extraction takes. Mitigated three ways: the file-size cap (§7a) keeps documents small, `extractStructuredData()` has its own internal timeout (`EXTRACTION_TIMEOUT_MS`, default 25s) so a slow call fails with a clear message rather than hanging until the platform kills it, and the `Document` record still exists with `status: "processing"` the instant it's created — so even if a request genuinely dies mid-flight, the app doesn't lose track of the upload; a page refresh will show it (as `processing`, retriable once bytes are confirmed present). The `status` field and the whole `processing → done/error` model in `Document.js` is deliberately there for this reason, even though the current single-region synchronous flow means most users never observe `processing` from the client the way they would with a real background queue.
+1. A `$text` query raced Mongoose's background index build on a cold database. Found by a manual smoke test against a *fresh* database; the mocked suite pre-connected and never hit it. Fixed in `db/connect.js`; regression test added.
+2. `.lean()` skips Mongoose's Buffer casting, so file downloads silently served base64 *strings* instead of bytes. The original test asserted a status code and content-type — both correct while the body was wrong. Now asserts the bytes.
+3. Test pollution: `jest.clearAllMocks()` doesn't drain `mockResolvedValueOnce` queues, and the chunking tests deliberately leave chunks unconsumed — leftovers spilled into the next test and failed it for unrelated reasons. Switched to `resetAllMocks`; the suite now passes under `--randomize`.
 
----
-
-## 10. Multi-file uploads are processed one at a time, not in parallel
-
-**Decision:** When multiple files are dropped, `App.jsx` awaits each upload before starting the next.
-
-**Reasoning:** Firing N synchronous LLM-calling requests at once from one client is an easy way to trip Anthropic API rate limits or pile concurrent invocations onto one Netlify Function, for a feature (batch upload) that isn't the core of the assignment. Sequential is slower for a big batch but simpler to reason about, and the in-flight UI (one card actively "uploading," the rest still queued as plain files) is honest about what's actually happening rather than showing five spinners that are secretly serialized anyway.
-
----
-
-## 11. Frontend: plain React + hand-written CSS, nothing else
-
-**Decision:** React + Vite, no additional runtime dependency. No `axios` (the `fetch`-based wrapper in `client/src/api/client.js` is ~15 lines and doesn't need it), no `react-router` (one screen with a detail panel doesn't need client-side routing), no component/CSS framework (hand-written CSS with custom properties for light/dark, in `client/src/index.css`).
-
-**Reasoning:** Explicit instruction was to avoid unnecessary libraries and stay inside a stack I'm comfortable with as a MERN developer. Every one of those libraries is genuinely useful in a bigger app; none of them earns its weight here, and hand-writing the ~700 lines of CSS was also the more honest signal of actual front-end craft than dropping in a component kit.
+Plus a **golden eval** (`npm run eval`) — 16 questions over 5 seeded documents, scoring **retrieval accuracy separately from generation accuracy**, because a prompt tweak can't fix a retrieval miss and conflating the numbers hides which one broke. Last run: 100% / 100%. Its first run reported 94% — which turned out to be a bug in my own scoring script, not the app.
 
 ---
 
-## 12. First-run experience: bundled "try it now" samples
+## 6. Documentation
 
-**Decision:** Two intentionally messy sample documents (a scrawled invoice, a disorganized meeting note — `client/src/sampleDocuments.js`) are one click away from the empty state, no file required.
-
-**Reasoning:** Someone grading this won't necessarily have a "messy document" sitting on their machine, and asking them to go find one before they can see the thing work is unnecessary friction on literally the first thing they'd do with the app. This was cheap to build (plain text, no server changes — it goes through the exact same upload path as a real file) and removes the single biggest first-run drop-off point I could think of.
+This file, and a README aimed at someone who has never seen the project: what it does, how to run it, how to run the tests and the eval. Code comments are reserved for explaining *why* — the non-obvious tradeoff, the bug that motivated a line — rather than restating what the code says.
 
 ---
 
-## 13. A passing test suite that still shipped two bugs — and what that changed
+## 7. Setup experience
 
-**What happened:** The Jest suite (`server/test/*.test.js`) — unit tests for the query sanitizer, file-type classifier, and text-flattening utility, plus a supertest integration suite against a pre-connected `mongodb-memory-server` — was fully green. I then ran a separate, deliberately more realistic manual smoke test (`GET`/`POST`/`DELETE` over real HTTP, against a freshly-booted app and a freshly-created in-memory database, with no pre-warmed connection) and it caught two real bugs the green suite had missed entirely:
+```bash
+npm install && cp server/.env.example server/.env   # fill in 2 values
+npm run dev
+```
 
-1. **`GET /documents/:id/file` returned the file's content as a base64 *string* body**, not raw bytes. Cause: `.lean()` skips Mongoose's schema-based casting, so a `Buffer`-typed field came back as the MongoDB driver's raw BSON `Binary` object instead of a real `Buffer`, and `res.send()` on that silently stringified it. Fixed by not using `.lean()` for that one read (`getDocumentFile` in `documentsController.js` — the only place in the app that needs the real casted type, not a plain object).
-2. **A `$text` search against a brand-new database threw `text index required for $text query`.** Cause: Mongoose builds schema indexes in the background and does not wait for that build before `.connect()` resolves; a request landing early enough loses the race. Fixed in `db/connect.js` by awaiting `Document.init()` (which resolves once indexes are confirmed built) as part of the same cached connection-promise chain every request already goes through — so the *first* request after a cold start pays that cost once, and nothing downstream needs to know it happened.
+One install, one command, both servers. `server/.env.example` documents every variable inline, including where to get each one.
 
-**Why the test suite didn't catch these:** the integration tests connect mongoose directly in `beforeAll` (bypassing `connectToDatabase()` and its index-await entirely) and check response *shape*, not exact byte content — both bugs live exactly in the gap between "the mocked/pre-warmed test path" and "a cold, real request." Also worth noting: the `fields: {}` case for unreadable documents surfaced a *third*, smaller bug during initial test-writing (not smoke-testing) — Mongoose's `minimize: true` default strips any key whose value is an empty object before saving, so an unreadable document's `fields` silently came back `undefined` instead of `{}`. Fixed with `minimize: false` on the schema, since "no data" and "we don't know" are meaningfully different signals here (see the schema comment in `Document.js`).
-
-**What changed as a result:** I added `server/test/connect.test.js` — a dedicated regression test that goes through `connectToDatabase()` itself (not a pre-connected mongoose instance) and issues a `$text` query immediately, so this race can't quietly come back — and strengthened the file-serving test to assert exact byte content instead of just a status code and content-type header. I'm including this section because I think *how a bug was found and what changed afterward* is a more honest signal than a suite that was green from the start — a suite that only tests the happy mocked path will pass right up until the deployed app breaks in the exact gap it never looked at.
-
----
-
-## 14. What's deliberately not built
-
-Stated plainly, with the reasoning, so it reads as scoping rather than gaps I didn't notice:
-
-- **No authentication / multi-user support.** Every document is visible to everyone who has the URL. Fine for a single-reviewer demo; the first thing I'd add for anything beyond that. Cut because auth is a well-understood, orthogonal problem that would have eaten build time better spent on the extraction/search pipeline this assignment is actually about.
-- **No rate limiting on uploads or search.** A malicious or just enthusiastic user could run up an Anthropic API bill. Acceptable for a demo behind a link I control; would add before sharing this more broadly.
-- **No retry/backoff on transient Anthropic API errors** (a dropped connection, a momentary 529) beyond the one explicit "Retry" button in the UI. Automatic retry-with-backoff is a reasonable next step; a manual retry that reuses the already-stored original file bytes (`POST /documents/:id/retry`) covers the common case without the added complexity of a queue.
-- **No virus/malware scanning of uploaded files.** Out of scope for a document-structuring demo; would matter for a real multi-tenant product accepting arbitrary uploads.
-- **No dark-mode toggle** — the UI follows the OS `prefers-color-scheme` automatically (see `index.css`), but there's no manual override control. Simpler, and covers the actual "does this look considered" bar without a settings surface for a single preference.
+**It degrades rather than refusing to start.** No `ANTHROPIC_API_KEY`? The app runs, uploads still save, extraction reports a clear per-document reason, search falls back to keyword-only, and a banner tells you why. Nothing about diagnosing a half-configured setup is left to guesswork.
 
 ---
 
-## 15. Rebuilding the frontend around a designed UI, mid-project — and what that changed
+## 8. Velocity
 
-Everything above was written against a UI I designed myself (a single-page upload/search/detail app). Partway through, I designed a considerably more ambitious UI in Claude Design — three screens (Ingest / Review / Ask), a persistent Q&A chat widget, and a dark "Nocturne" design system — and exported it as a working prototype (`Sift.dc.html` + `support.js`, a small template/state runtime specific to Claude Design's canvas editor). This section is about the decisions in adopting it, not a redo of §1–14, which still describe the backend and mostly still hold.
+Working, deployed, and verified end-to-end: ingestion for PDF / DOCX / images / text, schema-agnostic extraction with provenance, confidence and sensitivity flagging, a review flow with human confirmation, keyword + LLM-filtered search, a cited-or-refusing Ask endpoint with cross-document conflict detection, chunked resumable reading of long documents, 92 tests, a golden eval harness, and a three-screen UI built from a design system — running on one Netlify deploy with MongoDB Atlas.
 
-**Decision:** Replace the hand-built frontend entirely rather than reskin it. The two don't share a shape — the original was one page with a modal; the design is three screens plus a floating assistant, built around a provenance mechanic (click a field, the exact source text lights up) that the original's side-by-side raw-file view doesn't have an equivalent of. Retrofitting the new visual language onto the old structure would have produced something that looked like Sift but didn't behave like it. Renamed the product **Sift** to match.
-
-**Decision, and the harder call: build in two phases, UI first.** The design's own "States" panel — a debug switcher covering 15 real-world scenarios (upload failures, stalled processing, cross-document conflicts, model timeouts, a citation-required refusal state, offline, quota, session expiry, a 404) — is honestly a better edge-case spec than I'd have written myself. But several of those scenarios (offline sync, session/auth expiry, billing quotas, folder-level access control) imply infrastructure — auth, a billing system, an offline write queue — that's real product work outside a document-extraction assignment, and that I'd already deliberately cut in §14. Rather than either (a) building that infrastructure to make every scenario "real," or (b) skipping the States panel to avoid the question, the actual decision was: **keep the panel in the shipped app as a genuine feature**, backed by real logic for the scenarios the real pipeline can actually produce (upload validation failures, extraction errors and timeouts, blank/unreadable documents, a citation-required refusal), and by the prototype's own demo data for the ones that need infrastructure I'm not building. That split is the honest version of "above and beyond" here — it demonstrates the edge cases were thought through end-to-end, without pretending to have built auth and billing I didn't build.
-
-Concretely, this is a two-phase build:
-- **Phase A (this pass):** Port the design faithfully to React — same Nocturne tokens (`client/src/styles/nocturne.css`, copied verbatim per the design system's own guidance: "take every color, font, spacing, radius and shadow from its variables"), same three screens, same chat widget and States panel — running entirely on a local demo engine (`client/src/store/useSiftDemo.js`) ported from the prototype's own state/logic, so the UI/UX can be verified and signed off before any backend work depends on it.
-- **Phase B (next):** Wire it to the real API. This is a bigger backend change than a simple reskin implies — see the provenance decision below — and comes only after the UI itself is confirmed right, which is the explicit order the assignment's iteration asked for.
-
-**What I did NOT try to preserve from the prototype:** its markup style. `Sift.dc.html` expresses every element as a large inline `style="..."` string — normal, even necessary, for a design-canvas tool built around click-to-select and a properties panel — but not something to ship. `client/src/styles/app.css` is that same visual system translated into real, reusable classes (still built only from Nocturne's `var(--*)` tokens, never a hard-coded value); the components in `client/src/components/` read as ordinary React, not as a template-engine port.
-
-**Provenance is a real, harder change — not just UI.** The design's Review screen links each extracted field to the literal span of source text it came from. The prototype achieves this with hand-authored data (each line of document text is pre-split into `[text, fieldId]` segments) — fine for a mockup with two fixed example documents, meaningless once real documents produce fields the app has never seen the shape of. Making this real for Phase B means changing what extraction returns: alongside `value`, each field needs a verbatim `quote` copied from the document, checked as a real substring match (not trusted blindly — a hallucinated quote just doesn't highlight, it doesn't corrupt anything), against a full document transcription the model also has to produce (so image/PDF documents get the same mechanism as text ones, via one transcript instead of three different code paths). That's a genuine extraction-pipeline change, and it's deliberately being done as its own step after the UI is validated, not bundled into this pass.
+Two production bugs found and fixed against the live deployment, not just locally: an Atlas IP-allowlist issue, and a `basePath` mismatch where Netlify's rewrite passes the function the original client path rather than the internal one — which every prior test had "verified" against my own wrong assumption instead of the platform's real behaviour.
 
 ---
 
-## 16. Phase B: `fields` becomes an array of descriptors, not a flat object
+## 9. Above and beyond — the hard part I went at
 
-**Decision:** `Document.fields` changed from `Schema.Types.Mixed` (an arbitrary `{key: value}` object) to an array of field descriptors: `{key, label, value, quote, confidence, needsReview, reviewNote, reviewActions, confirmed, resolvedAction, sensitive, sensitivityReason}` (see `server/src/models/Document.js`). One descriptor per top-level extracted concept — a naturally nested value (an invoice's line items) stays as one field whose `value` is itself an array/object, not exploded into one descriptor per leaf.
+**Long documents, which is where this quietly falls over.**
 
-**Why now, and why a clean break:** everything Phase B needed to add — a source quote for provenance, a confidence score the UI can show as a bar, a human-reviewable note plus concrete resolution options (upgrading the old flat `lowConfidenceFields: [string]` list into something the Review screen's "Keep 4% / Keep 496.00" UI can actually use), a confirmed/resolved state, and a confidentiality flag — is per-field metadata. A flat value object had nowhere to put any of it without inventing a second parallel structure keyed the same way, which is worse than just making the field itself richer. Since nothing is deployed yet, this was a clean schema change, not a migration.
+The rental agreement is the whole reason this product exists for its user, and it is exactly the document a single request/response extraction can't handle. A 7-page PDF timed out in production. The easy fix is to raise a number — which fails again at 20 pages, and pretends the platform's patience is the user's problem.
 
-**What I cut:** per-leaf quotes for compound values (e.g. one quote for the whole `line_items` field, not one per line item). Fine for provenance highlighting at the level real documents actually need it; not pixel-perfect for deeply tabular data. Not worth the added extraction-schema complexity right now.
+So a document is no longer one model call. It's a sequence of bounded chunks: PDFs are split into real, smaller PDFs by page range (not described — actually rebuilt), each chunk is its own model call, and **results are persisted after every single chunk**. A request reads what fits in its budget, returns what it has, and leaves `nextChunkIndex` behind; the client resumes until done. A timeout, a crash, or a closed laptop costs you one chunk, not the document.
 
-## 17. Filtering on the new shape: a derived `fieldIndex` shadow, not `$elemMatch`
+Three things fall out of that, and each one is a deliberate property rather than a happy accident:
 
-**Decision:** Added `Document.fieldIndex`, a derived, read-only `{key: value}` object rebuilt every time `fields` is written (upload, retry, field-confirm — see `utils/flatten.js#buildFieldIndex`). Smart-search's `sanitizeFilters` (`services/queryBuilder.js`) keeps its existing flat-path logic completely unchanged, except the allowed prefix moved from `fields.` to `fieldIndex.`.
+- **Partial results are real results.** A document that fails on page 9 keeps pages 1–8, tells you where it stopped, and resumes from there.
+- **Merging is safety-preserving.** A later, more confident chunk can overwrite a value — but it can **never** clear an earlier chunk's needs-review or sensitivity flag. A warning that vanishes because page 10 mentioned the same field more confidently is exactly the silent downgrade this product can't afford.
+- **The progress bar became true.** It was decorative in the design. It now reports real chunks completed.
 
-**Alternative considered:** teach `sanitizeFilters` to build safe `$elemMatch` clauses directly against the `fields` array, so a filter like `fields.total_amount >= 500` matches the *same* array element's key and value rather than any element's key and any element's value (a real correctness bug without `$elemMatch` once fields are subdocuments in an array).
+*Verified, not asserted:* a 10-page rental agreement → 4 chunks, 3 in the first request and 1 resume, complete in 41s. 27 fields spanning every page including the signature block, every quote a verified substring, the bank account and deposit reference flagged sensitive, and Ask correctly answering a question that required combining clause 5 with clause 9.
 
-**Why the shadow field instead:** `sanitizeFilters` is the one piece of code in this repo explicitly built to be simple enough to audit — it's what stands between "the LLM proposed a filter" and "we ran it against the database," and it already has a dedicated test file proving it rejects injection attempts. Teaching it to construct correct, still-safe `$elemMatch` clauses (and combine several of them under one `$and` without cross-contamination) is real, easy-to-get-subtly-wrong complexity to add to that exact file, for a capability — filtering on a field's *metadata* (confidence, sensitivity) rather than its value — smart-search never actually used. The tradeoff, stated plainly: `fieldIndex` is denormalized data that could in principle drift from `fields` if some code path wrote one without the other. Mitigated by discipline, not a guarantee — every single place `fields` changes also recomputes `fieldIndex` in the same save, with no exceptions (verified by reading every write site, not just claimed).
+**Three smaller ones in the same spirit:**
 
-## 18. Real provenance, and a request-shape change that came with it
+- **Provenance you can check.** Extraction returns a verbatim transcription plus a source quote per field; the UI matches those quotes back into the text. The model is never trusted about where something came from — only `indexOf` is.
+- **Grounding that's enforced, not requested.** Asking the model to cite its sources is easy. Verifying every citation against the database and *forcing a refusal when none survive* is the part that makes the answer trustworthy.
+- **Retrieval and generation scored separately** in the eval, so a regression tells you which half broke.
 
-**Decision:** Extraction (`services/extraction.js`) now also returns `document_text` — the model's verbatim transcription of the document — capped at ~15,000 characters. Each field's `quote` is checked client-side as a literal substring of that transcription (`client/src/utils/provenance.js#buildProvenanceSegments`): sorted by position, overlaps resolved first-match-wins, and a quote that isn't actually found just never gets wrapped in a clickable span. Nothing downstream trusts a quote any further than "does `indexOf` find it" — the same posture as the query sanitizer, applied to a different kind of untrusted model output.
-
-**A real technical snag this caused, fixed in the same change:** the extraction call previously used a non-streaming request with `max_tokens: 2048`, sized for "just the fields." Once the response also has to carry a full document transcription, that's nowhere near enough, and a large non-streamed response risks the SDK hitting an HTTP timeout before the code's own `withTimeout` guard even gets a chance to apply. Fixed by switching to `anthropic.messages.stream(...).finalMessage()`, raising `max_tokens` to 8000, and raising `extractionTimeoutMs` from 25s to 45s (`server/src/config.js`). This makes the existing, already-documented Netlify function-timeout risk (§9) somewhat more real for large documents — worth naming here, not a reason to redesign synchronous processing again.
-
-**What I did NOT build:** paragraph-accurate re-rendering of the mock's hand-styled invoice layout (`docline-h`/`-li`/`-sum`, authored per specific sample document). Real documents render as flowing, highlighted paragraphs (`client/src/utils/provenance.js#buildProvenanceLines`, reusing the existing generic `p`/`gap` line styles) — a deliberate, honest simplification rather than trying to generically reconstruct invoice-table styling from an arbitrary transcript.
-
-## 19. `POST /ask`: grounded in the extracted corpus, not a vector index — and never trusting a citation
-
-**Decision:** `/ask` (`server/src/controllers/askController.js`, `server/src/services/askEngine.js`, `server/src/services/corpusDigest.js`) builds a compact digest of already-extracted structured data (`{documentId, filename, docType, summary, fields:[{key,label,value,sensitive}]}`, capped at 50 docs / 40 fields each, pre-filtered via the existing `$text` index by the question itself when the corpus is larger) and asks Claude — via the same forced-tool-use pattern as extraction and smart-search — for an answer, citations, or an explicit refusal.
-
-**The part that actually matters:** every citation the model proposes is re-verified server-side (`verifyCitations`) against the real database — does this `documentId` exist, is it `status: 'done'`, does it really have this `fieldKey`? Anything that fails is silently dropped, the same way a non-matching `quote` just doesn't highlight. **If zero citations survive and the model didn't already say `refused: true`, the whole response becomes a refusal** — a confidently-worded answer with citations that don't check out is not a grounded answer, it's a guess wearing grounding as a costume, and the rule exists specifically to catch that case rather than trust the model's own confidence.
-
-**Why no vector DB, confirmed explicitly with a real time constraint in play:** the corpus here is already structured — extraction did the hard part. Grounding a question in the extracted fields directly is simpler and more precise, at the scale a document-at-a-time tool like this actually runs at, than round-tripping through an embedding index whose main value (semantic recall over raw unstructured text) this app doesn't need, since the text is already turned into fields. Building real hybrid/vector search was floated and explicitly cut for this pass — see decisions.md §5 for the original version of this same call.
-
-**What I did NOT build:** true multi-turn conversational grounding for the floating chat widget. `chatSay` calls the exact same stateless `/ask` per message that the Ask screen uses — a follow-up question doesn't know what the previous answer was. Reasonable for a fact-lookup tool; a real conversational memory layer would be a separate, larger feature.
-
-## 20. Confidentiality flagging: trust the database, never the model's answer text
-
-**Decision:** Extraction marks a field `sensitive: true` (PII, financial account details, health information, salary, anything the document itself marks confidential/internal) with a short reason. `/ask` computes which *verified* citations are sensitive by reading that stored flag directly, and Review shows a standing notice when any of a document's fields are flagged — never by asking the model, at answer time, to remember to mention it.
-
-**Why this specific split:** an LLM asked to "answer the question, and also remember to flag anything sensitive" will sometimes just answer and forget the second instruction, especially under an otherwise-terse response format. Separating "classify sensitivity" (done once, at extraction time, as its own explicit field) from "decide whether to warn" (done deterministically from stored data, every time) means the warning can't silently disappear because a particular answer's phrasing didn't happen to mention it.
-
-**What I cut:** real permission/role enforcement (a user who shouldn't see a sensitive field simply not receiving it at all). This app has no users or roles — see §14. The flag here is a *caution*, not access control: "sensitive" fields are still returned and cited, just with a warning attached. Real enforcement is exactly the harder problem the separate permission-aware-RAG project (kept deliberately apart from this one) is about.
-
-## 21. Cross-document conflict detection: scoped to one answer's citations, and an honest limitation found while testing it
-
-**Decision:** When an `/ask` answer's *verified* citations span two or more documents that share the same field `key` but disagree on `value`, the response carries a `caveats` entry naming the conflict (`askEngine.js#computeConflicts`) — computed from the real stored values, not from anything the model's answer text says. Deliberately scoped to one answer's citation set, not a standing corpus-wide job: real entity/concept resolution across an arbitrary corpus (recognizing that two documents are describing "the same fact" even when they use different field names) is a genuinely harder, different problem, already cut in §5 as out of scope for a vector-search-free build.
-
-**The limitation, found by actually running it against real documents, not just imagined:** in manual testing, two documents that both described a price-escalation cap — one casually ("a note that contract caps future increases at CPI + 2%"), one formally ("§5.1 Pricing... capped at 4% flat, not CPI-linked") — got extracted under *different* field keys (`price_escalator_note` vs. `price_cap_percentage` / `cpi_linked`). The model's own answer text correctly spotted the discrepancy in prose ("there's a discrepancy..."), but the exact-key-match conflict detector didn't fire, because it only looks for the *same key* disagreeing, not semantically-equivalent facts under different keys. This is the direct, visible edge of the scoping decision above, not a bug — recorded here because noticing and naming a real limitation your own design predicts is more useful than a decisions.md that only describes the happy path. `server/test/askEngine.test.js` tests the mechanism as specified (same key, different value → caveat); it doesn't and can't test the cross-key case, because that's the thing that was deliberately not built.
-
-## 22. Golden eval harness for `/ask` — and a scoring bug in the harness itself, not the app
-
-**Decision:** `server/eval/` — 5 synthetic fixture documents (`fixtures.js`, embedded as plain text so the eval needs no sample files on disk) and 16 golden questions (`questions.json`) spanning easy lookups, cross-document synthesis, a designed-to-conflict case, and refusal cases. `runEval.js` seeds the fixtures through the real upload/extraction path, runs every question against the real `/ask`, and reports **retrieval accuracy** (did the verified citations name the right source documents) **separately from generation accuracy** (did the answer say the right thing, or correctly refuse) — borrowed directly from the user's separate permission-aware-RAG project idea, at the scale this project actually operates at. It's a standalone script (`npm run eval --workspace server`), not part of `npm test` or CI, and costs a small amount of real API usage on every run.
-
-**First real run:** 100% retrieval accuracy, 15/16 (94%) generation accuracy — but the one "failure" (the conflict question) was a bug in the eval script itself, not the app: that question had no `expectedAnswerContains` list (it's primarily checking retrieval + the conflict caveat, not specific wording), and the scoring code's fallback for "no content assertion given" mistakenly still required a non-empty substring match against an empty list, which can never pass. Fixed by making "no assertion given" fall back to "didn't wrongly refuse" instead of "matched nothing in an empty list." Included here for the same reason as §13's bugs: catching this by actually running the harness, not just writing it, is the point of having one.
-
-## 23. Field confirm/resolve endpoint, and "new fields" computed at read time
-
-**Decision:** `PATCH /documents/:id/fields/:key` (`documentsController.js#confirmField`) applies a user's chosen resolution (an optional new `value`, an optional `resolvedAction` naming which of the model's proposed options was picked, and always `confirmed: true` + `needsReview: false`), recomputing `fieldIndex`/`searchableText` in the same save. Deliberately does **not** try to auto-parse a value out of the button label text (e.g. inferring "496.00" from a "Keep 496.00" action) — the safer, more honest behavior is recording *which resolution the human picked* without guessing what value that implies, unless they explicitly provide one.
-
-`GET /documents/:id` also now returns `newFieldKeys` — the subset of this document's field keys not seen on any other `status: 'done'` document — computed at read time via `Document.distinct('fields.key', ...)` rather than stored, so it can't go stale if other documents are later deleted or re-extracted.
-
-## 24. Frontend Phase B: composing with the demo engine, not replacing it
-
-**Decision:** `client/src/store/useSift.js` is the new real-data engine, but it doesn't reimplement the 15 States-panel scenarios from scratch — it calls `useSiftDemo()` internally (unconditionally, per the rules of hooks) and, for the scenarios that still need infrastructure this project doesn't build (`stalled, partial, conflict, denied, model, ambiguous, offline, quota, session`), simply passes its output straight through. Only `ok, upload, reject, blank, nocite, 404` are backed by genuinely real actions (a real oversized/garbage upload attempt, a real near-blank image that genuinely comes back `unreadable`, a real unanswerable question, a real-but-trivial 404 screen). `StatesPanel` now shows a small "(demo)" tag on the illustrative ones, so the split is visible in the product itself, not just in this file.
-
-**This is a deviation from the original Phase B plan**, which called for trimming the demo mock data down to just the illustrative-overlay pieces once "real" logic replaced it everywhere. In practice, composing with the existing, already-verified demo engine for those 9 scenarios was both less code and lower-risk than re-deriving their rendering logic a second time — `mock/data.js`'s `DOCS`/`LAB_DOC`/`PENDING`/`SUGGESTIONS` stayed exactly as they were, because `useSiftDemo` still genuinely needs them. Worth recording as a case where the plan going in and the better implementation turned out not to match, and the honest move was to follow the better one rather than the letter of the plan.
-
-**One real setup gotcha, found during end-to-end verification, worth flagging outside this file too (see README):** MongoDB Atlas's IP allowlist blocked this machine from reaching the user's own cluster during final testing — a `MongooseServerSelectionError` naming the exact cause. Not a code bug; every layer of the app was still verified end-to-end by substituting a local instance for the verification pass. Recorded because "it works when I tested it, modulo an infra setting on your end" is a more honest status than silently working around it and saying nothing.
-
-**Also cleaned up in this pass:** `pdf-parse` was listed as a server dependency since the very first commit but never actually imported (§3 explicitly chose Claude's native PDF support instead) — removed. A `documents.api.test.js` test for the keyword-search fallback path only worked because the local `.env` had no `ANTHROPIC_API_KEY` at the time it was written; once a real key was added (needed for this phase's real-model testing), that test started exercising a real network call instead of the fallback path it claimed to test, and started failing for a reason that had nothing to do with a real regression. Fixed by mocking `queryBuilder.buildSmartQuery` explicitly rather than relying on the environment's key being absent — the kind of test that passes for the wrong reason until an environment changes, which is exactly the failure mode §13 is about.
-
----
-
-## 25. A frontend robustness pass, prompted directly by user feedback
-
-**What prompted it:** after using the deployed-locally app, the user asked for three concrete things — tooltips on every clickable element, a working "remove this document" action (they'd expected the existing "Clear" button to do this and it didn't — it only cleared the highlighted-field selection), a bulk "clear all documents" option, and a general "make sure the site doesn't go down or show confusing errors" pass. Recorded here because all four are real product feedback from actually using the thing, not decisions made in the abstract.
-
-**Tooltips:** added `title` attributes across every interactive element in every screen/component, not just the ones that were visually ambiguous — the ask was for full coverage, so it got full coverage rather than my own judgment call about which ones "needed" one.
-
-**"Clear" vs. delete — kept both, didn't repurpose one into the other.** The existing "Clear" button (`clearActive` — deselect the currently highlighted field) is a real, still-useful action once a document has several fields; silently changing what it does would fix the immediate confusion but break that. Instead: added a genuine **Delete** button next to it in Review (confirmed via `window.confirm`, calling the `DELETE /documents/:id` endpoint that already existed but had no UI trigger), and a **Clear all** button in Ingest's header for bulk deletion — implemented client-side as `Promise.allSettled` over the existing per-document delete endpoint rather than adding a new bulk-delete route, since the corpus sizes this app deals with don't need one and it keeps the backend's write surface exactly as small as it was.
-
-**Robustness, found by actually thinking through failure paths, not just the happy one:**
-- **A top-level React error boundary** (`ErrorBoundary.jsx`) — previously, any unexpected render-time error anywhere in the tree took the whole page to a blank white screen with no recovery path. Now it catches, shows a plain-language message, and offers a reload.
-- **A real 404 for a document that's gone** — `openDoc` now distinguishes "the document really doesn't exist" (a `404` from the API, surfaced via `err.status` — added to every thrown API error, not just checked by message string) from "something else broke," and shows the actual 404 experience instead of misleadingly rendering the "unreadable document" placeholder. This mattered immediately: it's exactly what a stale citation link or another tab's delete produces.
-- **A distinct "no document selected" state for Review** — previously, visiting Review before ever opening a document showed the same "No text could be recovered" message an unreadable document gets, which is actively wrong information. Now it's its own honest empty state with a way back to Ingest.
-- **A distinct load-failure banner** for "the initial document list fetch failed" (server unreachable, DB down) versus "there are just no documents yet" — these used to render identically (an empty queue), which is actively misleading during exactly the kind of outage this section is about catching.
-- **Toasts** (`hooks/useToasts.js`, `components/Toasts.jsx`) for the several places that used to fail silently — a field-confirm that didn't save, a retry that didn't work, a document that failed to load into Review — so a failed click is never indistinguishable from a slow one.
-
-**What I deliberately did not do:** replace `window.confirm()` for delete confirmations with a custom in-app modal. It's a plain, functional pattern already used consistently in this codebase; the only real downside is that some browser-automation tools can't interact with native dialogs (true, and it's exactly what made verifying this in-browser myself require stubbing `window.confirm` for the test) — not a real user-facing problem worth a new component for.
-
----
-
-## 26. A real production bug the local/manual-Mongo verification couldn't have caught: the Netlify Function's `basePath` was wrong
-
-**What happened:** after the user fixed their Atlas Network Access (§ earlier troubleshooting) and confirmed `MONGODB_URI` was correctly set in Netlify, the deployed site loaded fine but **every** `/api/*` call returned this app's own `{"error":"Not found."}` with a 404 — meaning the function was running and reachable, just not matching any route.
-
-**Diagnosis, not guesswork:** logged into the Netlify CLI (the user approved via a browser OAuth prompt) and curled the live site two ways — the function's own canonical URL (`/.netlify/functions/api/health`) returned `200 {"dbConnected":true,...}`, confirming the Atlas fix worked and the function itself was healthy; the exact same request through `/api/health` (the path the app actually calls, via the `netlify.toml` redirect) returned the app's own 404. That comparison is what pinned it down precisely, rather than guessing between several plausible causes.
-
-**Root cause:** `netlify/functions/api.js` configured `serverless-http` with `basePath: '/.netlify/functions/api'` — an assumption, stated in a comment, about what path Netlify would hand the function. That assumption was wrong: `netlify.toml`'s `/api/* -> /.netlify/functions/api/:splat` redirect is a *rewrite*, and Netlify invokes the function with `event.path` set to the **original client-facing path** (`/api/health`), not the internal function path. Since `/api/health` doesn't start with `/.netlify/functions/api`, `serverless-http`'s prefix-stripping never matched, so Express received the literal path `/api/health` against routes defined as `/health`, `/documents`, etc. — no match, its own 404 handler fired. Fixed by changing `basePath` to `/api`.
-
-**Why my own earlier verification missed this:** every previous check of the Netlify Function wrapper (build-time smoke tests, the Phase B verification pass) called `fn.handler(event, {})` with a **hand-constructed** `event.path` that matched my own assumption (`/.netlify/functions/api/health`), not Netlify's actual redirect behavior — which there was no way to observe without a real deployment and a real redirect actually firing. This is worth stating plainly rather than glossing over: a passing "integration test" that exercises your own assumption about a third-party platform's behavior, instead of the platform's real behavior, isn't actually testing the thing that broke — the same shape of gap as §13 and §22, now one level further outward (a platform integration boundary rather than a database race or a scoring script). The fix itself was verified the right way this time — against a hand-constructed event reproducing what curling the **live, already-deployed** site had just proven Netlify actually sends, not against a fresh assumption.
+**What I'd do next, honestly:** cross-document entity resolution (so conflicts are caught even when documents name the same fact differently), and per-page quote anchoring for tabular data (today a line-items block gets one quote for the region, not one per row).

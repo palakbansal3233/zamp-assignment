@@ -19,10 +19,23 @@ describe('classifyFile', () => {
     expect(classifyFile('readme.md', '').kind).toBe('text');
   });
 
-  test('rejects unsupported types with a human-readable reason', () => {
-    const result = classifyFile('resume.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  test('classifies .docx by mime type or extension', () => {
+    expect(classifyFile('rental-agreement.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document').kind).toBe('docx');
+    expect(classifyFile('rental-agreement.docx', 'application/octet-stream').kind).toBe('docx');
+  });
+
+  test('rejects legacy .doc with advice specific enough to act on', () => {
+    // The likeliest near-miss now that .docx works — a generic
+    // "unsupported" would leave someone re-uploading the same file.
+    const result = classifyFile('agreement.doc', 'application/msword');
     expect(result.kind).toBe('unsupported');
-    expect(result.reason).toMatch(/docx/i);
+    expect(result.reason).toMatch(/\.docx or PDF/i);
+  });
+
+  test('rejects unsupported types with a human-readable reason', () => {
+    const result = classifyFile('archive.zip', 'application/zip');
+    expect(result.kind).toBe('unsupported');
+    expect(result.reason).toMatch(/PDF/i);
   });
 
   test('rejects unknown binary with no extension and no mime type', () => {

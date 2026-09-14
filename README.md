@@ -1,96 +1,72 @@
 # Sift
 
-Turn messy documents into structured, queryable data. Built as a take-home assignment for Zamp.
+Turn messy documents into structured, queryable data — without telling it what kind of document it's looking at.
+
+**Live:** https://zamp-assignment.netlify.app · **Why it's built this way:** [`decisions.md`](./decisions.md)
+
+---
+
+## Who it's for
+
+The person holding a document that matters, which they can't fully read: a 12-page rental agreement before signing, a prescription in handwriting they need to relay to a friend picking up medicines, an invoice they need to check.
+
+Those documents share nothing structurally — which is why Sift never asks you to pick a document type or define a schema. It reads whatever you give it, extracts what's actually there, shows you where each value came from, tells you what it wasn't sure about, and warns you before you forward something sensitive.
 
 ## What it does
 
-1. Drop a document (PDF, photo/scan, or plain text) — or use the States panel's real "Nothing extractable" / "Upload failed" scenarios to see the failure paths without hunting for a bad file.
-2. Claude reads it — whatever it is — and returns a document type guess, a plain-language summary, and a structured set of fields, each with a confidence score, a note if it needs human review (with concrete resolution options you can pick from), and a flag if it's sensitive. Click a field in Review and the exact span of source text it came from lights up — a real substring match against the model's own transcription, not hand-authored.
-3. Ask questions across the whole corpus in plain language, and get an answer with citations back to the specific fields it's grounded in — or an explicit refusal when nothing supports an answer, never a guess. If two documents disagree, you're told; if the answer touches something sensitive, you're warned before you'd share it.
+**Ingest** — drop a PDF, Word doc, photo, scan, or text file. Long documents are read in parts, with progress saved as it goes.
 
-The interesting part isn't the CRUD — it's that the schema for "structured data" is different for every document and isn't known in advance. See `decisions.md` for how that shaped the storage, search, and extraction design, and for the security consideration in letting an LLM's output anywhere near a database query.
+**Review** — the original on the left, extracted fields on the right. Click a field and the exact text it came from lights up. Uncertain readings show the alternatives and let you pick.
 
-## Stack
+**Ask** — ask a question across everything you've uploaded. Answers cite the specific fields behind them, flag when two documents disagree, warn when they touch something sensitive, and refuse outright when nothing supports an answer.
 
-React (Vite) · Express · MongoDB (Mongoose) · Claude (Anthropic API) · deployed on Netlify (static site + the Express app as a Netlify Function) with MongoDB Atlas.
+## Running it
 
-```mermaid
-flowchart LR
-    subgraph Browser
-        UI[React app]
-    end
-    subgraph Netlify
-        Static[Static build]
-        Fn["Express app\n(Netlify Function)"]
-    end
-    Atlas[(MongoDB Atlas)]
-    Claude[Claude API]
-
-    UI -- "/*" --> Static
-    UI -- "/api/*" --> Fn
-    Fn --> Atlas
-    Fn --> Claude
-```
-
-
-
-Locally, the exact same Express app (`server/src/app.js`) runs via plain `app.listen()` instead of the Netlify Function wrapper — one codebase, no behavioral drift between local and deployed.
-
-## Running it locally
-
-
-
-### Prerequisites
-
-- Node.js 20+
-- A free [MongoDB Atlas](https://www.mongodb.com/cloud/atlas/register) cluster (M0 tier is enough)
-- A free [Anthropic API key](https://console.anthropic.com/settings/keys) — the app still runs without one, it just can't extract or smart-search (see below)
-
-### Setup
+**You'll need:** Node 20+, a free [MongoDB Atlas](https://www.mongodb.com/cloud/atlas/register) cluster, and an [Anthropic API key](https://console.anthropic.com/settings/keys).
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/palakbansal3233/zamp-assignment
 cd zamp-assignment
 npm install
-cp server/.env.example server/.env
-```
-
-Edit `server/.env` and fill in `MONGODB_URI` (required) and `ANTHROPIC_API_KEY` (optional but you'll want it — without it, uploads still save but extraction fails per-document with a clear message, and search silently falls back to keyword-only).
-
-```bash
+cp server/.env.example server/.env     # then fill in MONGODB_URI and ANTHROPIC_API_KEY
 npm run dev
 ```
 
-This runs the Express API (`:5050`) and the Vite dev server (`:5173`, proxying `/api` to the server — see `client/vite.config.js`) together. Open **[http://localhost:5173](http://localhost:5173)**.
+Open **http://localhost:5173**. That's it — one install, one command, both the API (`:5050`) and the UI.
 
-### Running tests
+Without an `ANTHROPIC_API_KEY` it still runs: uploads save, extraction reports a clear reason per document, search falls back to keyword-only, and a banner explains why.
 
-```bash
-npm test
-```
+> **Atlas note:** under **Network Access**, add `0.0.0.0/0`. Serverless functions have no fixed IP, so allowing only your own machine works locally and fails in deployment.
 
-60+ tests: unit tests for the query sanitizer (the NoSQL-injection-prevention layer — see `decisions.md` §8), the citation verifier and conflict detector behind `/ask` (§19, §21), the file-type classifier, and the search-text flattener; plus integration suites (supertest + an in-memory MongoDB, the model mocked) covering the full upload → extract → store → search → confirm-field → delete flow and the full `/ask` flow (grounded answers, forced refusals, conflicts, sensitivity), error paths, and regression tests for real bugs caught in manual testing (see `decisions.md` §13, §22, §24).
-
-### Running the golden eval for `/ask`
+## Tests
 
 ```bash
-npm run eval --workspace server
+npm test                          # 92 tests
+npm run eval --workspace server   # golden eval (makes real API calls)
 ```
 
-Not part of `npm test` — this seeds 5 synthetic documents through the *real* extraction pipeline and runs 16 golden questions against the *real* `/ask` endpoint, so it needs `ANTHROPIC_API_KEY` set and costs a small amount of real API usage. Reports retrieval accuracy (right documents cited) separately from generation accuracy (right answer, or correct refusal) — see `decisions.md` §22.
+The eval seeds 5 documents through real extraction and runs 16 questions against the real `/ask`, scoring retrieval accuracy separately from generation accuracy. Not part of `npm test` — it costs real API usage.
 
-## Project layout
+## Architecture
+
+React (Vite) · Express · MongoDB (Mongoose) · Claude · one Netlify deploy.
+
+```mermaid
+flowchart LR
+    UI[React app] -- "/*" --> Static[Static build]
+    UI -- "/api/*" --> Fn["Express app<br/>(Netlify Function)"]
+    Fn --> Atlas[(MongoDB Atlas)]
+    Fn --> Claude[Claude API]
+```
+
+The same Express app (`server/src/app.js`) runs under `app.listen()` locally and wrapped by `serverless-http` in deployment — one set of routes, no drift between what's tested and what ships.
 
 ```
-client/     React app (Vite)
-server/     Express app + Mongoose models/routes/services — runs locally as-is
-netlify/    Netlify Function wrapper around the same Express app
-netlify.toml
-decisions.md   <- the actual point of this repo
+client/    React app — three screens, one design system
+server/    Express API, extraction + chunking + ask services, tests, eval
+netlify/   Function wrapper around the same Express app
 ```
 
+## Deploying
 
-
-## Environment variables
-
-See `[server/.env.example](./server/.env.example)` for the full list with explanations. The two that matter: `MONGODB_URI` (required) and `ANTHROPIC_API_KEY` (extraction + smart search; the app degrades gracefully without it rather than failing to start).
+Connect the repo on Netlify — `netlify.toml` already carries the build command, publish directory, functions directory, and the `/api/*` redirect. Add `MONGODB_URI` and `ANTHROPIC_API_KEY` under **Site settings → Environment variables**, then redeploy (env changes don't apply to an existing build).

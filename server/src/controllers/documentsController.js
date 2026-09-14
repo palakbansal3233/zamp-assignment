@@ -2,6 +2,7 @@ const Document = require('../models/Document');
 const { config } = require('../config');
 const { classifyFile } = require('../services/fileTypes');
 const { extractStructuredData } = require('../services/extraction');
+const { getChunkPlan, buildChunkInput, mergeChunkResult } = require('../services/chunking');
 const { buildSearchableText, buildFieldIndex } = require('../utils/flatten');
 const { HttpError } = require('../middleware/errorHandler');
 
@@ -16,15 +17,86 @@ function asPublicDoc(doc) {
 }
 
 /**
- * Upload + process a document in one synchronous request/response.
+ * Reads as much of a document as fits in one request's budget, persisting
+ * after every chunk, and leaves behind enough state to pick up exactly
+ * where it stopped.
  *
- * Why synchronous rather than a background job queue: Netlify Functions have
- * no durable queue to hand work off to, and standing up one (SQS-alike +
- * poller) was disproportionate for a document-at-a-time assignment. The
- * tradeoff, spelled out in decisions.md, is that very large or multi-page
- * documents risk the platform's function timeout — we mitigate with a strict
- * file-size cap and an explicit internal timeout that fails with a clear
- * message instead of hanging.
+ * This is the answer to the problem a single request/response extraction
+ * can't solve: a 12-page rental agreement takes longer to read than any
+ * serverless platform will hold a request open, and the person uploading
+ * it doesn't care whose limit it is. So instead of one long call that
+ * either finishes or loses everything, each chunk is its own bounded model
+ * call whose result is saved immediately. A timeout, a crash, or a closed
+ * laptop lid costs you one chunk, not the document — and `nextChunkIndex`
+ * means resuming is just "keep going", not "start over". See decisions.md.
+ *
+ * Always does at least one chunk, so a single request always makes real
+ * progress no matter how tight the budget.
+ */
+async function runExtractionChunks(doc, buffer, classification) {
+  const startedAt = Date.now();
+  const plan = await getChunkPlan({ kind: classification.kind, buffer });
+
+  doc.extraction.totalChunks = plan.totalChunks;
+  doc.extraction.unit = plan.unit;
+  doc.extraction.totalUnits = plan.totalUnits;
+
+  let chunksThisRequest = 0;
+
+  while (doc.extraction.nextChunkIndex < plan.totalChunks) {
+    // Always read at least one chunk per request, so every request makes
+    // real forward progress no matter how tight the budget; after that,
+    // stop once we're out of budget and let the client resume.
+    if (chunksThisRequest > 0 && Date.now() - startedAt > config.requestChunkBudgetMs) break;
+
+    const index = doc.extraction.nextChunkIndex;
+    const input = await buildChunkInput({
+      kind: classification.kind,
+      buffer,
+      filename: doc.filename,
+      mimeType: doc.mimeType,
+      index,
+      plan,
+    });
+
+    const result = await extractStructuredData(input);
+    const merged = mergeChunkResult(doc, result);
+
+    doc.fields = merged.fields;
+    doc.documentText = merged.documentText;
+    doc.docType = merged.docType;
+    doc.summary = merged.summary;
+    doc.unreadable = merged.unreadable;
+    doc.unreadableReason = merged.unreadableReason;
+    doc.fieldIndex = buildFieldIndex(merged.fields);
+    doc.searchableText = buildSearchableText({
+      filename: doc.filename,
+      docType: doc.docType,
+      summary: doc.summary,
+      fields: merged.fields,
+    });
+
+    doc.extraction.nextChunkIndex = index + 1;
+    doc.extraction.completedChunks = index + 1;
+    doc.status = doc.extraction.nextChunkIndex >= plan.totalChunks ? 'done' : 'processing';
+
+    // Persist after every single chunk — this is the whole point.
+    await doc.save();
+    chunksThisRequest += 1;
+  }
+
+  return doc;
+}
+
+/**
+ * Upload + start processing in one request. Short documents finish here;
+ * long ones come back `processing` with real partial results already
+ * readable, and the client resumes them (see `resumeDocument`).
+ *
+ * Still no background job queue, deliberately — see decisions.md. The
+ * person this is built for uploads one document that matters and watches
+ * it land; they aren't batch-ingesting a corpus overnight, so durable
+ * queue infrastructure would buy them nothing and cost a lot.
  */
 async function uploadDocument(req, res) {
   const { filename, mimeType, dataBase64 } = req.body || {};
@@ -64,33 +136,16 @@ async function uploadDocument(req, res) {
   });
 
   try {
-    const extractionInput =
-      classification.kind === 'text'
-        ? { kind: 'text', filename, text: buffer.toString('utf-8').slice(0, 50000) }
-        : classification.kind === 'image'
-        ? { kind: 'image', filename, buffer, mimeType }
-        : { kind: 'pdf', filename, buffer };
-
-    const result = await extractStructuredData(extractionInput);
-
-    doc.status = 'done';
-    doc.unreadable = result.unreadable;
-    doc.unreadableReason = result.unreadableReason;
-    doc.docType = result.unreadable ? null : result.docType;
-    doc.summary = result.summary;
-    doc.fields = result.fields;
-    doc.documentText = result.documentText;
-    doc.fieldIndex = buildFieldIndex(result.fields);
-    doc.searchableText = buildSearchableText({
-      filename,
-      docType: doc.docType,
-      summary: doc.summary,
-      fields: doc.fields,
-    });
-    await doc.save();
+    await runExtractionChunks(doc, buffer, classification);
   } catch (err) {
     doc.status = 'error';
-    doc.errorMessage = err.message || 'Extraction failed for an unknown reason.';
+    // Anything already extracted stays on the record — a document that got
+    // 4 pages in before failing is far more useful than an empty error,
+    // and `nextChunkIndex` still points at where to resume.
+    doc.errorMessage =
+      doc.extraction.completedChunks > 0
+        ? `${err.message} (read ${doc.extraction.completedChunks} of ${doc.extraction.totalChunks} parts before this — retry to continue from there)`
+        : err.message || 'Extraction failed for an unknown reason.';
     await doc.save();
     // Still return 201 — the upload succeeded and is queryable; only
     // extraction failed. The client shows the per-document error inline
@@ -175,48 +230,53 @@ async function deleteDocument(req, res) {
   res.status(204).end();
 }
 
-async function retryDocument(req, res) {
+/**
+ * Continues reading a document that isn't finished yet — the other half of
+ * chunked extraction. `POST /documents/:id/resume` picks up at
+ * `nextChunkIndex`; `POST /documents/:id/retry` starts the whole document
+ * over (for when the problem was the reading, not where it stopped).
+ */
+async function continueExtraction(req, res, { fromScratch }) {
   const doc = await Document.findById(req.params.id).select('+fileData');
   if (!doc) throw new HttpError(404, 'Document not found.');
-  if (!doc.fileData) throw new HttpError(410, 'Original file bytes are no longer available to retry.');
+  if (!doc.fileData) throw new HttpError(410, 'Original file bytes are no longer available.');
 
   const classification = classifyFile(doc.filename, doc.mimeType);
   if (classification.kind === 'unsupported') throw new HttpError(415, classification.reason);
+
+  if (fromScratch) {
+    doc.extraction.nextChunkIndex = 0;
+    doc.extraction.completedChunks = 0;
+    doc.fields = [];
+    doc.documentText = '';
+    doc.docType = null;
+    doc.summary = '';
+    doc.unreadable = false;
+    doc.unreadableReason = null;
+  } else if (doc.status === 'done') {
+    return res.json(asPublicDoc(doc)); // nothing left to do
+  }
 
   doc.status = 'processing';
   doc.errorMessage = null;
   await doc.save();
 
   try {
-    const extractionInput =
-      classification.kind === 'text'
-        ? { kind: 'text', filename: doc.filename, text: doc.fileData.toString('utf-8').slice(0, 50000) }
-        : classification.kind === 'image'
-        ? { kind: 'image', filename: doc.filename, buffer: doc.fileData, mimeType: doc.mimeType }
-        : { kind: 'pdf', filename: doc.filename, buffer: doc.fileData };
-
-    const result = await extractStructuredData(extractionInput);
-    doc.status = 'done';
-    doc.unreadable = result.unreadable;
-    doc.unreadableReason = result.unreadableReason;
-    doc.docType = result.unreadable ? null : result.docType;
-    doc.summary = result.summary;
-    doc.fields = result.fields;
-    doc.documentText = result.documentText;
-    doc.fieldIndex = buildFieldIndex(result.fields);
-    doc.searchableText = buildSearchableText({
-      filename: doc.filename,
-      docType: doc.docType,
-      summary: doc.summary,
-      fields: doc.fields,
-    });
+    await runExtractionChunks(doc, doc.fileData, classification);
   } catch (err) {
     doc.status = 'error';
-    doc.errorMessage = err.message || 'Extraction failed for an unknown reason.';
+    doc.errorMessage =
+      doc.extraction.completedChunks > 0
+        ? `${err.message} (read ${doc.extraction.completedChunks} of ${doc.extraction.totalChunks} parts before this — retry to continue from there)`
+        : err.message || 'Extraction failed for an unknown reason.';
+    await doc.save();
   }
-  await doc.save();
+
   res.json(asPublicDoc(doc));
 }
+
+const retryDocument = (req, res) => continueExtraction(req, res, { fromScratch: true });
+const resumeDocument = (req, res) => continueExtraction(req, res, { fromScratch: false });
 
 module.exports = {
   uploadDocument,
@@ -225,5 +285,6 @@ module.exports = {
   getDocumentFile,
   deleteDocument,
   retryDocument,
+  resumeDocument,
   confirmField,
 };

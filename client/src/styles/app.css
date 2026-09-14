@@ -79,6 +79,17 @@ a:hover { color: var(--color-accent-200); }
 .dropzone-title { font-family: var(--font-heading); font-size: 16px; }
 .dropzone-note { font-size: 13px; text-align: center; text-wrap: pretty; }
 
+.sample-row {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  margin-top: var(--space-4); font-size: 0.85rem;
+}
+.sample-row__label { font-size: 12px; }
+.sample-chip {
+  border: 1px solid var(--color-neutral-800); background: transparent; color: var(--color-neutral-300);
+  border-radius: 999px; padding: 5px 12px; cursor: pointer; font-size: 12px; font-family: var(--font-body);
+}
+.sample-chip:hover { border-color: var(--color-accent-700); color: var(--color-accent-200); }
+
 .queue-heading-row { display: flex; align-items: baseline; justify-content: space-between; margin: var(--space-8) 0 var(--space-3); }
 .queue-heading-row h6 { margin: 0; color: var(--color-neutral-500); }
 .queue-heading-row .ready-label { font-size: 12px; }
@@ -166,7 +177,9 @@ a:hover { color: var(--color-accent-200); }
 .field-row.needs-check:not(.is-lit) { background: rgba(145,132,217,0.05); }
 .field-row-main { display: flex; align-items: center; gap: var(--space-3); }
 .field-label { width: 150px; flex: 0 0 150px; font-size: 12px; color: var(--color-neutral-500); font-variant: all-small-caps; letter-spacing: 0.06em; }
-.field-value { flex: 1; min-width: 0; font-size: 14px; text-wrap: pretty; }
+/* pre-line so a multi-entry value (a medication list, invoice line items)
+   renders as one readable line per entry rather than a run-on string. */
+.field-value { flex: 1; min-width: 0; font-size: 14px; text-wrap: pretty; white-space: pre-line; }
 .field-value.is-conflict { color: var(--color-accent-200); }
 .field-conf { width: 74px; flex: 0 0 74px; display: flex; justify-content: flex-end; align-items: center; gap: 6px; }
 .field-conf-track { width: 44px; height: 3px; border-radius: 2px; background: var(--color-neutral-900); overflow: hidden; }

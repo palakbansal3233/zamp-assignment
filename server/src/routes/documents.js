@@ -7,6 +7,7 @@ const {
   getDocumentFile,
   deleteDocument,
   retryDocument,
+  resumeDocument,
   confirmField,
 } = require('../controllers/documentsController');
 
@@ -17,6 +18,7 @@ router.get('/', asyncHandler(listDocuments));
 router.get('/:id', asyncHandler(getDocument));
 router.get('/:id/file', asyncHandler(getDocumentFile));
 router.post('/:id/retry', asyncHandler(retryDocument));
+router.post('/:id/resume', asyncHandler(resumeDocument));
 router.patch('/:id/fields/:key', asyncHandler(confirmField));
 router.delete('/:id', asyncHandler(deleteDocument));
 

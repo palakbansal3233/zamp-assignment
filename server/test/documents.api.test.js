@@ -37,7 +37,13 @@ beforeAll(async () => {
 }, 60000);
 
 afterEach(async () => {
-  jest.clearAllMocks();
+  // resetAllMocks, not clearAllMocks: `clear` wipes call history but leaves
+  // queued `mockResolvedValueOnce` values in place. The chunked-extraction
+  // tests below deliberately leave chunks unconsumed (that's what a budget
+  // cut-off *is*), so leftovers would spill into whichever test ran next
+  // and fail it for reasons that have nothing to do with it — an
+  // order-dependent failure that looks like a real regression.
+  jest.resetAllMocks();
   const { collections } = mongoose.connection;
   await Promise.all(Object.values(collections).map((c) => c.deleteMany({})));
 });
@@ -137,10 +143,10 @@ describe('POST /documents', () => {
   test('rejects unsupported file types with 415 and a helpful message', async () => {
     const res = await request(app)
       .post('/documents')
-      .send({ filename: 'resume.docx', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', dataBase64: 'AAAA' });
+      .send({ filename: 'archive.zip', mimeType: 'application/zip', dataBase64: 'AAAA' });
 
     expect(res.status).toBe(415);
-    expect(res.body.error).toMatch(/docx/i);
+    expect(res.body.error).toMatch(/PDF/i);
     expect(extractStructuredData).not.toHaveBeenCalled();
   });
 
@@ -164,6 +170,128 @@ describe('POST /documents', () => {
   test('rejects empty file data with 400', async () => {
     const res = await request(app).post('/documents').send({ filename: 'empty.txt', dataBase64: '' });
     expect(res.status).toBe(400);
+  });
+});
+
+// The long-document path: a 12-page rental agreement can't be read inside
+// one request, so it's read in chunks, persisted as it goes, and resumed.
+// These cover the properties that make that safe rather than just clever.
+describe('POST /documents (long documents, chunked + resumable)', () => {
+  const { CHARS_PER_CHUNK } = require('../src/services/chunking');
+  const { config } = require('../src/config');
+  const longText = () => 'A'.repeat(CHARS_PER_CHUNK) + 'B'.repeat(CHARS_PER_CHUNK) + 'C'.repeat(100);
+
+  function mockChunkResults() {
+    // One distinct result per chunk, so we can prove all of them landed.
+    extractStructuredData
+      .mockResolvedValueOnce({ unreadable: false, unreadableReason: null, docType: 'rental_agreement', summary: 'A lease.', documentText: 'part one', fields: [field('rent', 1000)] })
+      .mockResolvedValueOnce({ unreadable: false, unreadableReason: null, docType: 'other', summary: 'More.', documentText: 'part two', fields: [field('deposit', 2000)] })
+      .mockResolvedValueOnce({ unreadable: false, unreadableReason: null, docType: 'other', summary: 'End.', documentText: 'part three', fields: [field('notice_period', 60)] });
+  }
+
+  const upload = () =>
+    request(app)
+      .post('/documents')
+      .send({ filename: 'rental-agreement.txt', mimeType: 'text/plain', dataBase64: Buffer.from(longText()).toString('base64') });
+
+  test('reads every chunk and merges them when the request budget allows', async () => {
+    mockChunkResults();
+    const res = await upload();
+
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('done');
+    expect(extractStructuredData).toHaveBeenCalledTimes(3);
+    expect(res.body.extraction).toMatchObject({ totalChunks: 3, completedChunks: 3, unit: 'char' });
+    expect(res.body.fields.map((f) => f.key).sort()).toEqual(['deposit', 'notice_period', 'rent']);
+    expect(res.body.documentText).toBe('part one\n\npart two\n\npart three');
+    expect(res.body.docType).toBe('rental_agreement'); // first real classification held
+  });
+
+  test('with no budget left, one request reads exactly one chunk and reports real partial progress', async () => {
+    const original = config.requestChunkBudgetMs;
+    config.requestChunkBudgetMs = 0;
+    try {
+      mockChunkResults();
+      const res = await upload();
+
+      expect(res.status).toBe(201);
+      expect(res.body.status).toBe('processing'); // honest: not finished
+      expect(extractStructuredData).toHaveBeenCalledTimes(1);
+      expect(res.body.extraction).toMatchObject({ totalChunks: 3, completedChunks: 1, nextChunkIndex: 1 });
+      // The partial result is already real and readable — not withheld
+      // until the whole document finishes.
+      expect(res.body.fields.map((f) => f.key)).toEqual(['rent']);
+    } finally {
+      config.requestChunkBudgetMs = original;
+    }
+  });
+
+  test('resume picks up exactly where it stopped rather than starting over', async () => {
+    const original = config.requestChunkBudgetMs;
+    config.requestChunkBudgetMs = 0;
+    let created;
+    try {
+      mockChunkResults();
+      created = (await upload()).body;
+      expect(created.extraction.completedChunks).toBe(1);
+
+      // Two resumes, one chunk each.
+      const afterSecond = await request(app).post(`/documents/${created._id}/resume`);
+      expect(afterSecond.body.extraction.completedChunks).toBe(2);
+      expect(afterSecond.body.status).toBe('processing');
+
+      const afterThird = await request(app).post(`/documents/${created._id}/resume`);
+      expect(afterThird.body.extraction.completedChunks).toBe(3);
+      expect(afterThird.body.status).toBe('done');
+
+      // Three chunks total across all requests — no chunk was re-read.
+      expect(extractStructuredData).toHaveBeenCalledTimes(3);
+      expect(afterThird.body.fields.map((f) => f.key).sort()).toEqual(['deposit', 'notice_period', 'rent']);
+    } finally {
+      config.requestChunkBudgetMs = original;
+    }
+  });
+
+  test('resuming an already-finished document is a no-op, not a re-read', async () => {
+    mockChunkResults();
+    const created = (await upload()).body;
+    expect(created.status).toBe('done');
+    extractStructuredData.mockClear();
+
+    const res = await request(app).post(`/documents/${created._id}/resume`);
+    expect(res.body.status).toBe('done');
+    expect(extractStructuredData).not.toHaveBeenCalled();
+  });
+
+  test('a failure partway through keeps everything read so far, and says where it stopped', async () => {
+    extractStructuredData
+      .mockResolvedValueOnce({ unreadable: false, unreadableReason: null, docType: 'rental_agreement', summary: 'A lease.', documentText: 'part one', fields: [field('rent', 1000)] })
+      .mockRejectedValueOnce(new Error('Extraction timed out.'));
+
+    const res = await upload();
+
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('error');
+    // The first chunk's work survives the second chunk's failure.
+    expect(res.body.fields.map((f) => f.key)).toEqual(['rent']);
+    expect(res.body.documentText).toBe('part one');
+    expect(res.body.errorMessage).toMatch(/read 1 of 3 parts/i);
+    // ...and it's resumable from exactly there.
+    expect(res.body.extraction.nextChunkIndex).toBe(1);
+  });
+
+  test('retry re-reads from the beginning, unlike resume', async () => {
+    extractStructuredData.mockResolvedValue({
+      unreadable: false, unreadableReason: null, docType: 'receipt', summary: 'A receipt.', documentText: 'text', fields: [field('total', 10)],
+    });
+    const created = (await request(app)
+      .post('/documents')
+      .send({ filename: 'receipt.txt', mimeType: 'text/plain', dataBase64: Buffer.from('short').toString('base64') })).body;
+    extractStructuredData.mockClear();
+
+    const res = await request(app).post(`/documents/${created._id}/retry`);
+    expect(res.body.extraction.completedChunks).toBe(1);
+    expect(extractStructuredData).toHaveBeenCalledTimes(1); // read again from scratch
   });
 });
 

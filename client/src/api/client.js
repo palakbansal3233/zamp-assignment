@@ -86,6 +86,13 @@ export function retryDocument(id) {
   return request(`/documents/${id}/retry`, { method: 'POST' });
 }
 
+// Continues a long document that didn't finish inside one request's budget
+// (see the server's chunked extraction). Safe to call repeatedly — it's a
+// no-op once the document is done.
+export function resumeDocument(id) {
+  return request(`/documents/${id}/resume`, { method: 'POST' });
+}
+
 export function searchDocuments(q, mode = 'smart') {
   const params = new URLSearchParams({ q, mode });
   return request(`/query?${params.toString()}`);

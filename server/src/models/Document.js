@@ -91,6 +91,18 @@ const DocumentSchema = new Schema(
     // `fields[].quote`. Not shown as "the extracted data" itself.
     documentText: { type: String, default: '' },
 
+    // Where we are in reading a long document. A 12-page agreement is read
+    // in bounded chunks with results persisted after each one, so progress
+    // survives a timeout, a crash, or a closed tab — and so the progress
+    // bar in the UI reports something real. See services/chunking.js.
+    extraction: {
+      totalChunks: { type: Number, default: 0 },
+      completedChunks: { type: Number, default: 0 },
+      nextChunkIndex: { type: Number, default: 0 },
+      unit: { type: String, default: 'whole' }, // 'page' | 'char' | 'whole'
+      totalUnits: { type: Number, default: 0 },
+    },
+
     unreadable: { type: Boolean, default: false },
     unreadableReason: { type: String, default: null },
 
