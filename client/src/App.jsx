@@ -8,6 +8,7 @@ import NotFoundScreen from './components/screens/NotFoundScreen';
 import StatesPanel from './components/StatesPanel';
 import ChatWidget from './components/ChatWidget';
 import SessionDialog from './components/SessionDialog';
+import Toasts from './components/Toasts';
 
 // Phase B: the app runs on useSift, the real-data engine — see
 // decisions.md §24. It composes real API state with the original demo
@@ -17,7 +18,7 @@ import SessionDialog from './components/SessionDialog';
 // engines return the same shape.
 export default function App() {
   const sift = useSift();
-  const { nav, topBar, banner, ingest, review, ask, states, chat, session, loading } = sift;
+  const { nav, topBar, banner, ingest, review, ask, states, chat, session, loading, toasts, dismissToast } = sift;
 
   return (
     <div className="sift-app">
@@ -42,6 +43,7 @@ export default function App() {
       <StatesPanel states={states} />
       <ChatWidget chat={chat} />
       <SessionDialog session={session} />
+      {toasts && <Toasts toasts={toasts} onDismiss={dismissToast} />}
     </div>
   );
 }

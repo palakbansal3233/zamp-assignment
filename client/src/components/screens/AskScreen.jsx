@@ -12,8 +12,9 @@ export default function AskScreen({ ask }) {
             onChange={(e) => ask.onDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') ask.submit(); }}
             placeholder="Ask across every document…"
+            title="Type a question about any of your uploaded documents"
           />
-          <button type="button" className="btn btn-primary" onClick={ask.submit}>Ask</button>
+          <button type="button" className="btn btn-primary" title="Ask this question across every document" onClick={ask.submit}>Ask</button>
         </div>
 
         {ask.busy && (
@@ -37,7 +38,7 @@ export default function AskScreen({ ask }) {
             <div className="ask-error-text">{ask.error.text}</div>
             <div className="ask-error-actions">
               {ask.error.actions.map((a, i) => (
-                <button key={i} type="button" className={`btn ${a.cls}`} onClick={a.run}>{a.label}</button>
+                <button key={i} type="button" className={`btn ${a.cls}`} title={a.label} onClick={a.run}>{a.label}</button>
               ))}
             </div>
             {ask.error.code && <div className="ask-error-code">{ask.error.code}</div>}
@@ -52,7 +53,7 @@ export default function AskScreen({ ask }) {
             <div className="ask-citations">
               <span className="ask-citations-label">Read from</span>
               {ask.answer.citations.map((c, i) => (
-                <button key={i} type="button" className="citation-chip" onClick={c.go}>
+                <button key={i} type="button" className="citation-chip" title={`Open this field in Review: ${c.label}`} onClick={c.go}>
                   <i className="ph ph-file-text" />{c.label}
                 </button>
               ))}
@@ -67,7 +68,7 @@ export default function AskScreen({ ask }) {
 
         <div className="suggestions-list">
           {ask.suggestions.map((q) => (
-            <button key={q.rank} type="button" className="suggestion-row" onClick={q.ask}>
+            <button key={q.rank} type="button" className="suggestion-row" title={`Ask: "${q.text}"`} onClick={q.ask}>
               <span className="suggestion-rank">{q.rank}</span>
               <span className="suggestion-text">{q.text}</span>
               <span className="suggestion-source">{q.source}</span>

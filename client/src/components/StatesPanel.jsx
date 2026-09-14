@@ -4,7 +4,7 @@ export default function StatesPanel({ states }) {
     <div className="states-panel">
       <div className="states-panel-header">
         <h6>States</h6>
-        <button type="button" className="states-panel-close" onClick={states.toggle}>
+        <button type="button" className="states-panel-close" title="Close the States panel" onClick={states.toggle}>
           <i className="ph ph-x" />
         </button>
       </div>
@@ -14,6 +14,7 @@ export default function StatesPanel({ states }) {
             key={sc.id}
             type="button"
             className={`state-btn${states.current === sc.id ? ' is-active' : ''}`}
+            title={sc.isReal === false ? `${sc.note} — illustrative demo, not live backend behavior` : `${sc.note} — triggers real backend behavior`}
             onClick={sc.run}
           >
             <span className="state-btn-label">

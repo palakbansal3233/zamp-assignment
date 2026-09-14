@@ -1,13 +1,26 @@
 // Thin fetch wrapper — no axios. Every function throws an Error whose
 // `.message` is already the server's human-readable message (from
-// errorHandler.js on the server), so components can show it directly.
+// errorHandler.js on the server), so components can show it directly. The
+// thrown Error also carries `.status` (the HTTP status code, or 0 for a
+// request that never reached the server at all) so callers that need to
+// tell "not found" apart from "something broke" — e.g. a document that was
+// deleted out from under an open tab — don't have to string-match a message.
 const BASE = '/api';
 
 async function request(path, options = {}) {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
-    ...options,
-  });
+  let res;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
+      ...options,
+    });
+  } catch (networkErr) {
+    // fetch itself threw — offline, DNS failure, CORS, server unreachable.
+    const err = new Error('Could not reach the server. Check your connection and try again.');
+    err.status = 0;
+    err.cause = networkErr;
+    throw err;
+  }
 
   if (res.status === 204) return null;
 
@@ -20,7 +33,9 @@ async function request(path, options = {}) {
   }
 
   if (!res.ok) {
-    throw new Error(body?.error || `Request failed (${res.status}). Please try again.`);
+    const err = new Error(body?.error || `Request failed (${res.status}). Please try again.`);
+    err.status = res.status;
+    throw err;
   }
   return body;
 }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSiftDemo } from './useSiftDemo';
+import { useToasts } from '../hooks/useToasts';
 import * as api from '../api/client';
 import { buildProvenanceLines } from '../utils/provenance';
 import { SCENARIOS } from '../mock/data';
@@ -50,6 +51,7 @@ const BLANK_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQV
 
 export function useSift() {
   const demo = useSiftDemo(); // kept alive so DEMO_SCENARIO_IDS keep working exactly as before
+  const { toasts, push: pushToast, dismiss: dismissToast } = useToasts();
 
   const [screen, setScreen] = useState('ingest');
   const [scen, setScen] = useState('ok');
@@ -60,15 +62,18 @@ export function useSift() {
 
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [inFlight, setInFlight] = useState([]); // [{tempId, filename}]
   const [failedUploads, setFailedUploads] = useState([]); // [{id,name,kind,icon,sub,actions}]
 
   const [docId, setDocId] = useState(null);
   const [openDocData, setOpenDocData] = useState(null);
   const [docLoading, setDocLoading] = useState(false);
+  const [docNotFound, setDocNotFound] = useState(false);
   const [active, setActive] = useState(null);
   const [hover, setHover] = useState(null);
   const [confirmingKey, setConfirmingKey] = useState(null);
+  const [deletingAll, setDeletingAll] = useState(false);
 
   const [askDraft, setAskDraft] = useState('');
   const [askBusy, setAskBusy] = useState(false);
@@ -90,6 +95,23 @@ export function useSift() {
     }
   }, []);
 
+  // A failed initial load (server unreachable, DB down) is a fundamentally
+  // different situation from "there are just no documents yet" — showing
+  // an empty queue for the former is actively misleading, so it gets its
+  // own error state instead of silently falling through to an empty list.
+  const loadDocuments = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const res = await api.listDocuments({ page: 1, limit: 50 });
+      setDocuments(res.items);
+    } catch (err) {
+      setLoadError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -99,36 +121,37 @@ export function useSift() {
       } catch {
         /* fall back to defaults */
       }
-      try {
-        const res = await api.listDocuments({ page: 1, limit: 50 });
-        if (!cancelled) setDocuments(res.items);
-      } catch {
-        /* ingest just shows empty; per-action errors surface individually */
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-      refreshSuggestions();
+      if (!cancelled) await loadDocuments();
+      if (!cancelled) refreshSuggestions();
     })();
     return () => {
       cancelled = true;
     };
-  }, [refreshSuggestions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const openDoc = useCallback(async (id, fieldKey) => {
     setDocId(id);
     setActive(fieldKey || null);
     setScreen('review');
     setDocLoading(true);
+    setDocNotFound(false);
     setOpenDocData(null);
     try {
       const full = await api.getDocument(id);
       setOpenDocData(full);
-    } catch {
+    } catch (err) {
       setOpenDocData(null);
+      // A document can legitimately disappear out from under an open tab —
+      // deleted in another tab, or via "Clear all". Distinguish that (show
+      // the real 404 screen) from "something's actually broken" (show the
+      // generic unreadable-style message with the real error).
+      if (err.status === 404) setDocNotFound(true);
+      else pushToast(`Couldn't load that document: ${err.message}`, 'error');
     } finally {
       setDocLoading(false);
     }
-  }, []);
+  }, [pushToast]);
 
   // ---- uploads ----
   const runUpload = useCallback(
@@ -176,11 +199,11 @@ export function useSift() {
         const updated = await api.retryDocument(id);
         setDocuments((prev) => prev.map((d) => (d._id === updated._id ? updated : d)));
         if (docId === id) setOpenDocData((prev) => (prev ? { ...prev, ...updated } : updated));
-      } catch {
-        /* the row's own sub-text stays as the previous error */
+      } catch (err) {
+        pushToast(`Retry failed: ${err.message}`, 'error');
       }
     },
-    [docId]
+    [docId, pushToast]
   );
 
   // ---- field confirm/resolve ----
@@ -192,14 +215,58 @@ export function useSift() {
         const updated = await api.confirmField(docId, key, { confirmed: true, resolvedAction });
         setOpenDocData((prev) => (prev ? { ...prev, ...updated } : updated));
         setDocuments((prev) => prev.map((d) => (d._id === updated._id ? { ...d, ...updated } : d)));
-      } catch {
-        /* the field just stays flagged; nothing else to do here */
+      } catch (err) {
+        pushToast(`Couldn't save that: ${err.message}`, 'error');
       } finally {
         setConfirmingKey(null);
       }
     },
-    [docId]
+    [docId, pushToast]
   );
+
+  // ---- delete ----
+  const handleDeleteDocument = useCallback(
+    async (id) => {
+      const target = documents.find((d) => d._id === id);
+      const name = target?.filename || 'this document';
+      if (typeof window !== 'undefined' && !window.confirm(`Delete "${name}"? This can't be undone.`)) return;
+      try {
+        await api.deleteDocument(id);
+        setDocuments((prev) => prev.filter((d) => d._id !== id));
+        if (docId === id) {
+          setScreen('ingest');
+          setDocId(null);
+          setOpenDocData(null);
+        }
+        refreshSuggestions();
+        pushToast(`Deleted "${name}".`, 'success');
+      } catch (err) {
+        pushToast(`Couldn't delete "${name}": ${err.message}`, 'error');
+      }
+    },
+    [documents, docId, refreshSuggestions, pushToast]
+  );
+
+  const handleDeleteAllDocuments = useCallback(async () => {
+    if (documents.length === 0) return;
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm(`Delete all ${documents.length} document${documents.length === 1 ? '' : 's'}? This can't be undone.`)
+    ) {
+      return;
+    }
+    setDeletingAll(true);
+    const results = await Promise.allSettled(documents.map((d) => api.deleteDocument(d._id)));
+    const failedCount = results.filter((r) => r.status === 'rejected').length;
+    setDeletingAll(false);
+    setScreen('ingest');
+    setDocId(null);
+    setOpenDocData(null);
+    await loadDocuments(); // re-fetch from the server rather than trust local state after a partial failure
+    refreshSuggestions();
+    if (failedCount === 0) pushToast('All documents deleted.', 'success');
+    else pushToast(`Deleted ${results.length - failedCount} of ${results.length} — ${failedCount} failed to delete.`, 'warning');
+  }, [documents, loadDocuments, refreshSuggestions, pushToast]);
 
   // ---- ask ----
   const runAskReal = useCallback(async (question) => {
@@ -313,11 +380,16 @@ export function useSift() {
     readyLabel: `${documents.filter((d) => d.status === 'done').length} ready${inFlight.length ? ` · ${inFlight.length} reading` : ''}`,
     items: [...failedUploads, ...queueItems, ...pendingItems],
     openDoc,
+    deleteAll: handleDeleteAllDocuments,
+    deletingAll,
+    canDeleteAll: documents.length > 0,
   };
 
   const doc = openDocData;
   const realReview = {
     docLoading,
+    notFound: docNotFound,
+    noSelection: !docId && !docLoading && !docNotFound,
     docTabs: documents
       .filter((d) => d.status === 'done')
       .slice(0, 8)
@@ -328,6 +400,7 @@ export function useSift() {
     readable: !!doc && !doc.unreadable,
     unreadableTitle: 'No text could be recovered',
     unreadableText: doc?.unreadableReason || 'The document could not be read clearly enough to extract structured data.',
+    deleteDocument: () => docId && handleDeleteDocument(docId),
     docLines: doc ? buildProvenanceLines(doc.documentText, doc.fields).map((line) => ({
       kind: line.kind,
       amt: null,
@@ -372,6 +445,7 @@ export function useSift() {
       : null,
     clearActive: () => { setActive(null); setHover(null); },
     goAsk: () => setScreen('ask'),
+    goIngest: () => setScreen('ingest'),
   };
 
   const askError = askResult && askResult.refused
@@ -443,11 +517,23 @@ export function useSift() {
       }
     : null;
 
+  // A real, distinct banner for "we couldn't reach the server at all" —
+  // separate from the extraction-not-configured one above, and separate
+  // from the demo engine's illustrative offline/stalled banners.
+  const loadErrorBanner = loadError
+    ? {
+        icon: 'ph ph-wifi-slash', title: "Couldn't load your documents.",
+        text: loadError, cta: 'Retry', action: loadDocuments,
+      }
+    : null;
+
   return {
     loading,
+    loadError,
+    toasts, dismissToast,
     nav: { go: (s) => setScreen(s), current: screen },
-    topBar: demoMode ? demo.topBar : { pct: inFlight.length ? 60 : 0 },
-    banner: demoMode ? demo.banner : realBanner,
+    topBar: demoMode ? demo.topBar : { pct: inFlight.length || deletingAll ? 60 : 0 },
+    banner: demoMode ? demo.banner : loadErrorBanner || realBanner,
     ingest: demoMode ? demo.ingest : realIngest,
     review: demoMode ? demo.review : realReview,
     ask: demoMode ? demo.ask : realAsk,

@@ -9,6 +9,7 @@ function QueueRow({ item, onOpen }) {
       <div
         className={`queue-row-main${item.clickable ? ' is-clickable' : ''}`}
         onClick={item.clickable ? () => onOpen(item.id) : undefined}
+        title={item.clickable ? `Open "${item.name}" in Review` : item.name}
       >
         <i className={`${item.icon} queue-icon${item.status !== 'done' ? ' is-muted' : ''}`} />
         <div className="queue-info">
@@ -19,7 +20,7 @@ function QueueRow({ item, onOpen }) {
         <div className="queue-status">
           {item.status === 'pending' && (
             <>
-              <div className="queue-bar-track">
+              <div className="queue-bar-track" title={item.stage}>
                 <div
                   className={`queue-bar-fill${item.stalled || item.paused ? ' is-stalled' : ''}`}
                   style={{ width: `${item.pct}%` }}
@@ -39,7 +40,7 @@ function QueueRow({ item, onOpen }) {
       {item.actions && item.actions.length > 0 && (
         <div className="queue-actions">
           {item.actions.map((a, i) => (
-            <button key={i} type="button" className={`btn ${a.cls}`} onClick={a.run}>{a.label}</button>
+            <button key={i} type="button" className={`btn ${a.cls}`} title={a.label} onClick={a.run}>{a.label}</button>
           ))}
         </div>
       )}
@@ -70,9 +71,22 @@ export default function IngestScreen({ ingest }) {
           <h6>Ingest</h6>
           <h3>Drop anything in. We work out the shape.</h3>
         </div>
-        <button type="button" className="btn btn-primary" onClick={openPicker}>
-          <i className="ph ph-plus" />Add document
-        </button>
+        <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+          {ingest.deleteAll && ingest.canDeleteAll && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              title="Permanently delete every document in this dataset"
+              disabled={ingest.deletingAll}
+              onClick={ingest.deleteAll}
+            >
+              <i className="ph ph-trash" />{ingest.deletingAll ? 'Deleting…' : 'Clear all'}
+            </button>
+          )}
+          <button type="button" className="btn btn-primary" title="Choose a file to upload" onClick={openPicker}>
+            <i className="ph ph-plus" />Add document
+          </button>
+        </div>
       </div>
 
       <div className="ingest-body">
@@ -92,6 +106,7 @@ export default function IngestScreen({ ingest }) {
         <div
           className={`dropzone${ingest.dropDisabled ? ' is-disabled' : ''}${dragActive ? ' is-drag-active' : ''}`}
           onClick={openPicker}
+          title={ingest.dropDisabled ? 'Uploads are unavailable right now' : 'Click to choose a file, or drop one here'}
           onDragOver={(e) => {
             if (!hasRealUpload || ingest.dropDisabled) return;
             e.preventDefault();

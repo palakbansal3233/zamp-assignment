@@ -12,6 +12,7 @@ function DocLine({ line }) {
               onClick={seg.onClick}
               onMouseEnter={seg.onEnter}
               onMouseLeave={seg.onLeave}
+              title="Click to highlight the field this text supports"
             >
               {seg.text}
             </span>
@@ -27,12 +28,18 @@ function DocLine({ line }) {
 
 function FieldRow({ f }) {
   return (
-    <div className={`field-row${f.lit ? ' is-lit' : ''}${f.needs ? ' needs-check' : ''}`} onClick={f.onClick} onMouseEnter={f.onEnter} onMouseLeave={f.onLeave}>
+    <div
+      className={`field-row${f.lit ? ' is-lit' : ''}${f.needs ? ' needs-check' : ''}`}
+      onClick={f.onClick}
+      onMouseEnter={f.onEnter}
+      onMouseLeave={f.onLeave}
+      title="Click to highlight where this field came from in the original"
+    >
       <div className="field-row-main">
         <div className="field-label">{f.label}</div>
         <div className={`field-value${f.conflict ? ' is-conflict' : ''}`}>{f.value}</div>
         <div className="field-conf">
-          <div className="field-conf-track">
+          <div className="field-conf-track" title={`Confidence: ${f.pct}%`}>
             <div className="field-conf-fill" style={{ width: `${f.pct}%`, background: f.barColor }} />
           </div>
         </div>
@@ -41,7 +48,15 @@ function FieldRow({ f }) {
         <div className="field-check-row">
           <span className="field-check-note"><i className="ph ph-warning-circle" />{f.checkNote}</span>
           {f.checkActions.map((a, i) => (
-            <button key={i} type="button" className="btn btn-secondary" onClick={(e) => { e.stopPropagation(); a.run(); }}>{a.label}</button>
+            <button
+              key={i}
+              type="button"
+              className="btn btn-secondary"
+              title={`Resolve this field as "${a.label}"`}
+              onClick={(e) => { e.stopPropagation(); a.run(); }}
+            >
+              {a.label}
+            </button>
           ))}
         </div>
       )}
@@ -49,18 +64,61 @@ function FieldRow({ f }) {
   );
 }
 
+function EmptyReviewState({ icon, title, text, actionLabel, onAction }) {
+  return (
+    <div className="notfound-wrap">
+      <div className="notfound-inner">
+        <i className={icon} style={{ fontSize: 40, color: 'var(--color-neutral-600)' }} />
+        <h4>{title}</h4>
+        <p>{text}</p>
+        {onAction && (
+          <div className="notfound-actions">
+            <button type="button" className="btn btn-primary" title={actionLabel} onClick={onAction}>{actionLabel}</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ReviewScreen({ review }) {
+  if (review.notFound) {
+    return (
+      <EmptyReviewState
+        icon="ph ph-file-dashed"
+        title="This document isn't here anymore"
+        text="It may have been deleted — from this tab, another tab, or via Clear all. Head back to Ingest to see what's still there."
+        actionLabel="Back to Ingest"
+        onAction={review.goIngest}
+      />
+    );
+  }
+
+  if (review.noSelection) {
+    return (
+      <EmptyReviewState
+        icon="ph ph-file-text"
+        title="No document selected"
+        text="Pick a document from Ingest to see what was extracted from it."
+        actionLabel="Go to Ingest"
+        onAction={review.goIngest}
+      />
+    );
+  }
+
   return (
     <>
       <div className="review-tabsbar">
         <div className="doc-tabs">
           {review.docTabs.map((t) => (
-            <button key={t.id} type="button" className={`doc-tab${t.active ? ' is-active' : ''}`} onClick={t.go}>{t.label}</button>
+            <button key={t.id} type="button" className={`doc-tab${t.active ? ' is-active' : ''}`} title={`Switch to "${t.label}"`} onClick={t.go}>{t.label}</button>
           ))}
         </div>
         <div className="review-tabsbar-spacer" />
         <span className="review-meta text-muted">{review.meta}</span>
-        <button type="button" className="btn btn-ghost" onClick={review.goAsk}><i className="ph ph-sparkle" />Ask this document</button>
+        <button type="button" className="btn btn-ghost" title="Ask a question grounded in this document" onClick={review.goAsk}>
+          <i className="ph ph-sparkle" />Ask this document
+        </button>
       </div>
 
       <div className="review-body">
@@ -87,7 +145,14 @@ export default function ReviewScreen({ review }) {
               <h6>Inferred record</h6>
               <div className="review-schema-note">{review.schemaNote}</div>
             </div>
-            <button type="button" className="btn btn-ghost" onClick={review.clearActive}>Clear</button>
+            <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+              <button type="button" className="btn btn-ghost" title="Deselect the currently highlighted field" onClick={review.clearActive}>Clear</button>
+              {review.deleteDocument && (
+                <button type="button" className="btn btn-ghost" title="Permanently delete this document" onClick={review.deleteDocument}>
+                  <i className="ph ph-trash" />Delete
+                </button>
+              )}
+            </div>
           </div>
 
           {review.notice && (
@@ -101,7 +166,7 @@ export default function ReviewScreen({ review }) {
               </div>
               <div className="extraction-notice-actions">
                 {review.notice.actions.map((a, i) => (
-                  <button key={i} type="button" className={`btn ${a.cls}`} onClick={a.run}>{a.label}</button>
+                  <button key={i} type="button" className={`btn ${a.cls}`} title={a.label} onClick={a.run}>{a.label}</button>
                 ))}
               </div>
             </div>
@@ -115,7 +180,7 @@ export default function ReviewScreen({ review }) {
             <div className="new-fields-title">Fields this document added to the dataset</div>
             <div className="new-fields-tags">
               {review.newFields.map((label) => (
-                <span key={label} className="tag tag-outline">{label}</span>
+                <span key={label} className="tag tag-outline" title={`"${label}" was not seen on any other document before this one`}>{label}</span>
               ))}
             </div>
           </div>

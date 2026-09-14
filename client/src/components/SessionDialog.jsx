@@ -9,8 +9,8 @@ export default function SessionDialog({ session }) {
           and will be submitted when you sign back in.
         </div>
         <div className="dialog-actions">
-          <button type="button" className="btn btn-ghost" onClick={session.dismiss}>Keep reading</button>
-          <button type="button" className="btn btn-primary" onClick={session.dismiss}>Sign back in</button>
+          <button type="button" className="btn btn-ghost" title="Dismiss and keep browsing" onClick={session.dismiss}>Keep reading</button>
+          <button type="button" className="btn btn-primary" title="Dismiss and sign back in" onClick={session.dismiss}>Sign back in</button>
         </div>
       </div>
     </div>

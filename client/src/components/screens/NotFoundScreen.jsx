@@ -9,8 +9,8 @@ export default function NotFoundScreen({ onGoIngest, onGoAsk }) {
           was removed from the corpus. Its extracted fields went with it.
         </p>
         <div className="notfound-actions">
-          <button type="button" className="btn btn-primary" onClick={onGoIngest}>Back to queue</button>
-          <button type="button" className="btn btn-ghost" onClick={onGoAsk}>Search the corpus</button>
+          <button type="button" className="btn btn-primary" title="Return to the Ingest screen" onClick={onGoIngest}>Back to queue</button>
+          <button type="button" className="btn btn-ghost" title="Go to Ask to search across your documents" onClick={onGoAsk}>Search the corpus</button>
         </div>
       </div>
     </div>
