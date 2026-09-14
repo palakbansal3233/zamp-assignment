@@ -1,11 +1,6 @@
 # Sift
 
-Turn messy documents — invoices, receipts, scribbled notes, scans, photos of handwriting, resumes, whatever shows up — into structured, queryable data. Built as a take-home assignment for Zamp.
-
-**Live app:** _add your Netlify URL here after deploying_
-**Design decisions:** see [`decisions.md`](./decisions.md) — the more revealing document of the two. Start at §15 if you want the story of how this came together: the UI rebuild, then wiring it to a real backend with real provenance and a real, cited `/ask`.
-
-> **Current status:** fully wired end-to-end — real extraction (with source-quote provenance), real search, and a real grounded `/ask` endpoint (citations, refusals, cross-document conflict detection, a confidentiality caution) all connect through to the three-screen UI. The 15-scenario "States" panel is a real, permanent feature: 6 of its scenarios trigger genuine backend behavior, the rest are clearly labeled "(demo)" for the ones that would need infrastructure out of scope for this project (auth, billing, an offline queue) — see `decisions.md` §15 and §24.
+Turn messy documents into structured, queryable data. Built as a take-home assignment for Zamp.
 
 ## What it does
 
@@ -37,24 +32,19 @@ flowchart LR
     Fn --> Claude
 ```
 
+
+
 Locally, the exact same Express app (`server/src/app.js`) runs via plain `app.listen()` instead of the Netlify Function wrapper — one codebase, no behavioral drift between local and deployed.
 
 ## Running it locally
+
+
 
 ### Prerequisites
 
 - Node.js 20+
 - A free [MongoDB Atlas](https://www.mongodb.com/cloud/atlas/register) cluster (M0 tier is enough)
 - A free [Anthropic API key](https://console.anthropic.com/settings/keys) — the app still runs without one, it just can't extract or smart-search (see below)
-
-### Getting a MongoDB Atlas connection string
-
-1. [Create a free cluster](https://www.mongodb.com/cloud/atlas/register) (M0).
-2. **Database Access** → add a database user (username + password).
-3. **Network Access** → add `0.0.0.0/0` (fine for a demo project; tighten for anything real).
-4. **Connect** → **Drivers** → copy the connection string, looks like `mongodb+srv://<user>:<password>@<cluster>.mongodb.net/...`.
-
-> **If the server logs `MongooseServerSelectionError: ... IP that isn't whitelisted`:** step 3 above hasn't taken effect yet, or your network's outbound IP changed since you added it. Go back to **Network Access** in Atlas and confirm `0.0.0.0/0` (or your current IP) is actually listed and not still "pending."
 
 ### Setup
 
@@ -71,7 +61,7 @@ Edit `server/.env` and fill in `MONGODB_URI` (required) and `ANTHROPIC_API_KEY` 
 npm run dev
 ```
 
-This runs the Express API (`:5050`) and the Vite dev server (`:5173`, proxying `/api` to the server — see `client/vite.config.js`) together. Open **http://localhost:5173**.
+This runs the Express API (`:5050`) and the Vite dev server (`:5173`, proxying `/api` to the server — see `client/vite.config.js`) together. Open **[http://localhost:5173](http://localhost:5173)**.
 
 ### Running tests
 
@@ -89,15 +79,6 @@ npm run eval --workspace server
 
 Not part of `npm test` — this seeds 5 synthetic documents through the *real* extraction pipeline and runs 16 golden questions against the *real* `/ask` endpoint, so it needs `ANTHROPIC_API_KEY` set and costs a small amount of real API usage. Reports retrieval accuracy (right documents cited) separately from generation accuracy (right answer, or correct refusal) — see `decisions.md` §22.
 
-## Deploying to Netlify
-
-1. Push this repo to GitHub.
-2. In Netlify: **Add new site → Import an existing project**, pick the repo. Build settings are already in `netlify.toml` (build command, publish directory, functions directory, and the `/api/*` redirect) — Netlify should pick them up automatically.
-3. **Site settings → Environment variables**, add:
-   - `MONGODB_URI` — same Atlas connection string as local (or a separate cluster/database for prod)
-   - `ANTHROPIC_API_KEY`
-4. Deploy. The site and the API are the same domain — no CORS configuration needed.
-
 ## Project layout
 
 ```
@@ -108,6 +89,8 @@ netlify.toml
 decisions.md   <- the actual point of this repo
 ```
 
+
+
 ## Environment variables
 
-See [`server/.env.example`](./server/.env.example) for the full list with explanations. The two that matter: `MONGODB_URI` (required) and `ANTHROPIC_API_KEY` (extraction + smart search; the app degrades gracefully without it rather than failing to start).
+See `[server/.env.example](./server/.env.example)` for the full list with explanations. The two that matter: `MONGODB_URI` (required) and `ANTHROPIC_API_KEY` (extraction + smart search; the app degrades gracefully without it rather than failing to start).
