@@ -89,7 +89,7 @@ Every feature below traces back to one of those four. Anything that didn't, I di
 
 ## 5. Tests
 
-**92 tests, and they're pointed at the things that would actually hurt.**
+**93 tests, and they're pointed at the things that would actually hurt.**
 
 - The query sanitizer, against injection attempts (`$where`, operator objects smuggled as values, prototype-ish paths).
 - Citation verification: a hallucinated document id, a field key that doesn't exist, a malformed citation — each dropped; and the rule that **zero surviving citations forces a refusal** rather than an ungrounded answer.
@@ -128,7 +128,7 @@ One install, one command, both servers. `server/.env.example` documents every va
 
 ## 8. Velocity
 
-Working, deployed, and verified end-to-end: ingestion for PDF / DOCX / images / text, schema-agnostic extraction with provenance, confidence and sensitivity flagging, a review flow with human confirmation, keyword + LLM-filtered search, a cited-or-refusing Ask endpoint with cross-document conflict detection, chunked resumable reading of long documents, 92 tests, a golden eval harness, and a three-screen UI built from a design system — running on one Netlify deploy with MongoDB Atlas.
+Working, deployed, and verified end-to-end: ingestion for PDF / DOCX / images / text, schema-agnostic extraction with provenance, confidence and sensitivity flagging, a review flow with human confirmation, keyword + LLM-filtered search, a cited-or-refusing Ask endpoint with cross-document conflict detection, chunked resumable reading of long documents, 93 tests, a golden eval harness, and a three-screen UI built from a design system — running on one Netlify deploy with MongoDB Atlas.
 
 Two production bugs found and fixed against the live deployment, not just locally: an Atlas IP-allowlist issue, and a `basePath` mismatch where Netlify's rewrite passes the function the original client path rather than the internal one — which every prior test had "verified" against my own wrong assumption instead of the platform's real behaviour.
 
@@ -148,7 +148,9 @@ Three things fall out of that, and each one is a deliberate property rather than
 - **Merging is safety-preserving.** A later, more confident chunk can overwrite a value — but it can **never** clear an earlier chunk's needs-review or sensitivity flag. A warning that vanishes because page 10 mentioned the same field more confidently is exactly the silent downgrade this product can't afford.
 - **The progress bar became true.** It was decorative in the design. It now reports real chunks completed.
 
-*Verified, not asserted:* a 10-page rental agreement → 4 chunks, 3 in the first request and 1 resume, complete in 41s. 27 fields spanning every page including the signature block, every quote a verified substring, the bank account and deposit reference flagged sensitive, and Ask correctly answering a question that required combining clause 5 with clause 9.
+*Verified against production, not asserted:* a 10-page tenancy agreement → 5 chunks, 2 in the upload request (returning at 17.8s with those two already saved and readable) and 3 on one resume, complete in 34.8s. 24 fields spanning every page including the signature block, **zero** unverifiable quotes, bank details and the deposit reference flagged sensitive, and Ask correctly answering a question that required combining clause 5 with clause 9.
+
+**And the part that only production could teach me.** The first deployed attempt came back `504 Inactivity Timeout` from the edge. The bug was in how I'd defined "budget": it decided whether to *start* another chunk, so a chunk beginning at 29s could run the request past 45s — bounded at the wrong end. The fix is that the controller now refuses to start a chunk unless the slowest one so far would still fit, which bounds total elapsed time as intended; the budget dropped to 18s and chunks to 2 pages so one always fits comfortably. And because a request can die *after* the server has already saved chunks — the work survives, only the response is lost — the client now re-reads the document on failure and carries on if it advanced, rather than treating a dropped response as a dead document. Three changes, all written from one real HTTP status code rather than from imagination.
 
 **Three smaller ones in the same spirit:**
 
