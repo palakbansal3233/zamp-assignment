@@ -187,7 +187,7 @@ async function extractStructuredData(input) {
   // no title block and no parties named on it, reads as an unlabelled
   // fragment and comes back "unreadable" or misclassified.
   const chunkNote = input.chunkContext
-    ? `\n\nNOTE: this is ${input.chunkContext.label || `part ${input.chunkContext.index + 1} of ${input.chunkContext.total}`} of a longer document. Extract only what this part actually contains — don't infer the parts you can't see, and don't mark it unreadable merely because it lacks a heading or context that would appear elsewhere in the document.`
+    ? `\n\nNOTE: this is ${input.chunkContext.label || `part ${input.chunkContext.index + 1} of ${input.chunkContext.total}`} of a longer document. Extract only what this part actually contains — don't infer the parts you can't see, and don't mark it unreadable merely because it lacks a heading or context that would appear elsewhere in the document.\n\nOne exception: write \`summary\` as a description of what the document as a whole appears to be, based on what you can see here. Do not describe it as an excerpt and do not mention part or page numbers — these summaries are stitched together, and the reader sees one document, not the parts it was read in.`
     : '';
 
   const content = [];
