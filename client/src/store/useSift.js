@@ -182,6 +182,11 @@ export function useSift() {
   // until it's finished — each call is another bounded slice of reading,
   // and each one lands real, visible progress. The guard is there so a
   // server that somehow never advances can't spin the browser forever.
+  // Which documents this tab is actively reading — so a document being read
+  // right now shows progress, while one left stranded by an earlier session
+  // offers a way to pick it back up.
+  const [resumingIds, setResumingIds] = useState([]);
+
   const resumeUntilDone = useCallback(async (id) => {
     let current = null;
     let lastCompleted = -1;
@@ -224,13 +229,17 @@ export function useSift() {
         let created = await factory();
         setDocuments((prev) => [created, ...prev]);
         if (created.status === 'processing') {
+          const id = created._id;
+          setResumingIds((prev) => [...prev, id]);
           try {
-            created = (await resumeUntilDone(created._id)) || created;
+            created = (await resumeUntilDone(id)) || created;
           } catch (err) {
             // Reading stopped partway. What was already read is saved and
-            // visible; the row offers Retry. Don't throw the whole upload
-            // away over it.
+            // visible, and the row offers "Continue reading" to pick it
+            // back up. Don't throw the whole upload away over it.
             pushToast(`"${filename}" was partly read — ${err.message}`, 'warning');
+          } finally {
+            setResumingIds((prev) => prev.filter((x) => x !== id));
           }
         }
         refreshSuggestions();
@@ -263,6 +272,21 @@ export function useSift() {
       }
     },
     [runUpload]
+  );
+
+  const handleContinueReading = useCallback(
+    async (id) => {
+      setResumingIds((prev) => [...prev, id]);
+      try {
+        await resumeUntilDone(id);
+        refreshSuggestions();
+      } catch (err) {
+        pushToast(err.message, 'warning');
+      } finally {
+        setResumingIds((prev) => prev.filter((x) => x !== id));
+      }
+    },
+    [resumeUntilDone, refreshSuggestions, pushToast]
   );
 
   const handleRetryDocument = useCallback(
@@ -429,12 +453,20 @@ export function useSift() {
     if (d.status === 'processing' && d.extraction?.totalChunks > 1) {
       const { completedChunks = 0, totalChunks = 1, unit } = d.extraction;
       const noun = unit === 'page' ? 'page group' : 'part';
+      // A document can be left mid-read — a closed laptop, a dropped
+      // connection, a tab shut between chunks. The parts already read are
+      // saved, so this needs to be a document you can pick back up, not one
+      // stranded on a spinner forever.
+      const stranded = !resumingIds.includes(d._id);
       return {
         id: d._id, name: d.filename, kind: 'Reading…', icon: iconForDocType(d.docType), clickable: true,
         sub: d.summary || 'Reading this document in parts — everything read so far is already saved.',
         status: 'pending',
         pct: Math.round((completedChunks / totalChunks) * 100),
         stage: `${noun} ${completedChunks} of ${totalChunks}`,
+        actions: stranded
+          ? [{ label: 'Continue reading', cls: 'btn-secondary', run: () => handleContinueReading(d._id) }]
+          : [],
       };
     }
     if (d.status === 'error') {
