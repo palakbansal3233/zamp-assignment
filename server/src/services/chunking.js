@@ -7,7 +7,11 @@ const { HttpError } = require('../middleware/errorHandler');
 // request/response extraction budget. So a document isn't one model call
 // any more: it's a sequence of bounded chunks, each persisted as it
 // completes. See decisions.md ("Long documents").
-const PAGES_PER_CHUNK = 3;
+// Two pages per chunk, not three: a text-dense contract page takes real
+// time to read, and the whole scheme only works if a single chunk
+// comfortably fits inside one request. Smaller chunks mean more requests,
+// which is fine — they're cheap and each one lands saved progress.
+const PAGES_PER_CHUNK = 2;
 const CHARS_PER_CHUNK = 12000;
 
 async function docxToText(buffer) {

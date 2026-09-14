@@ -56,7 +56,11 @@ describe('buildChunkInput', () => {
     const sliced = await PDFDocument.load(second.buffer);
     expect(sliced.getPageCount()).toBe(PAGES_PER_CHUNK);
     expect(second.buffer.length).toBeLessThan(buffer.length);
-    expect(second.chunkContext.label).toMatch(/pages 4-6 of 7/);
+    // Derived from the constant, not hardcoded — chunk size is a tuning
+    // knob (it moved 3 -> 2 on production evidence) and a test that has to
+    // be edited every time it's tuned is just friction.
+    const start = PAGES_PER_CHUNK + 1;
+    expect(second.chunkContext.label).toBe(`pages ${start}-${start + PAGES_PER_CHUNK - 1} of 7`);
   });
 
   test('the final PDF chunk covers only the remaining pages', async () => {

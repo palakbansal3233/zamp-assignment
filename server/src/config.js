@@ -18,10 +18,13 @@ const config = {
   // read across several requests (see documentsController#runExtractionChunks).
   extractionTimeoutMs: parseInt(process.env.EXTRACTION_TIMEOUT_MS || '45000', 10),
   // How much wall-clock one upload/resume request will spend reading chunks
-  // before returning what it has and letting the client resume. Deliberately
-  // well under any plausible serverless request ceiling: the point is that
-  // the document's length stops being coupled to the platform's patience.
-  requestChunkBudgetMs: parseInt(process.env.REQUEST_CHUNK_BUDGET_MS || '30000', 10),
+  // before returning what it has and letting the client resume. The point
+  // is that a document's length stops being coupled to the platform's
+  // patience — so this has to sit comfortably below the edge's request
+  // ceiling, not near it. Set from real evidence: a request that ran ~45s
+  // in production came back as a 504 from the edge, so the budget is 18s
+  // and the controller refuses to *start* a chunk that wouldn't fit.
+  requestChunkBudgetMs: parseInt(process.env.REQUEST_CHUNK_BUDGET_MS || '18000', 10),
   // Same idea, for the /ask endpoint's grounded-answer call — kept as its
   // own knob since the corpus-digest prompt has different size/latency
   // characteristics than a single document's extraction.

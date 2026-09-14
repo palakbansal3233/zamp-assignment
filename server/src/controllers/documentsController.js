@@ -42,13 +42,23 @@ async function runExtractionChunks(doc, buffer, classification) {
   doc.extraction.totalUnits = plan.totalUnits;
 
   let chunksThisRequest = 0;
+  let slowestChunkMs = 0;
 
   while (doc.extraction.nextChunkIndex < plan.totalChunks) {
     // Always read at least one chunk per request, so every request makes
-    // real forward progress no matter how tight the budget; after that,
-    // stop once we're out of budget and let the client resume.
-    if (chunksThisRequest > 0 && Date.now() - startedAt > config.requestChunkBudgetMs) break;
+    // real forward progress no matter how tight the budget.
+    //
+    // After that, the budget has to bound *total elapsed time*, not just
+    // when a chunk starts — an earlier version checked only the latter and
+    // a chunk beginning at 29s could run the request well past 45s, which
+    // is how this earned a 504 from the edge in production. So only start
+    // another chunk if the slowest one so far would still fit.
+    if (chunksThisRequest > 0) {
+      const elapsed = Date.now() - startedAt;
+      if (elapsed + slowestChunkMs > config.requestChunkBudgetMs) break;
+    }
 
+    const chunkStartedAt = Date.now();
     const index = doc.extraction.nextChunkIndex;
     const input = await buildChunkInput({
       kind: classification.kind,
@@ -83,6 +93,7 @@ async function runExtractionChunks(doc, buffer, classification) {
     // Persist after every single chunk — this is the whole point.
     await doc.save();
     chunksThisRequest += 1;
+    slowestChunkMs = Math.max(slowestChunkMs, Date.now() - chunkStartedAt);
   }
 
   return doc;

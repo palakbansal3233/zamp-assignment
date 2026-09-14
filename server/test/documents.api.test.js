@@ -252,6 +252,35 @@ describe('POST /documents (long documents, chunked + resumable)', () => {
     }
   });
 
+  test('will not start a chunk that would overrun the request budget', async () => {
+    // The budget has to bound total elapsed time, not just when a chunk
+    // starts — checking only the latter is what earned a 504 from the edge
+    // in production, because a chunk beginning just inside the budget ran
+    // the request far past it.
+    const original = config.requestChunkBudgetMs;
+    config.requestChunkBudgetMs = 150;
+    try {
+      const slowChunk = (documentText) => () =>
+        new Promise((resolve) => setTimeout(() => resolve({
+          unreadable: false, unreadableReason: null, docType: 'rental_agreement', summary: 'A lease.', documentText, fields: [],
+        }), 100));
+      extractStructuredData
+        .mockImplementationOnce(slowChunk('one'))
+        .mockImplementationOnce(slowChunk('two'))
+        .mockImplementationOnce(slowChunk('three'));
+
+      const res = await upload();
+
+      // One chunk took ~100ms, so a second would land at ~200ms against a
+      // 150ms budget — it must not be started.
+      expect(extractStructuredData).toHaveBeenCalledTimes(1);
+      expect(res.body.status).toBe('processing');
+      expect(res.body.extraction.completedChunks).toBe(1);
+    } finally {
+      config.requestChunkBudgetMs = original;
+    }
+  });
+
   test('resuming an already-finished document is a no-op, not a re-read', async () => {
     mockChunkResults();
     const created = (await upload()).body;

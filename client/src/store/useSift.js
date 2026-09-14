@@ -184,11 +184,33 @@ export function useSift() {
   // server that somehow never advances can't spin the browser forever.
   const resumeUntilDone = useCallback(async (id) => {
     let current = null;
+    let lastCompleted = -1;
+
     for (let attempt = 0; attempt < 60; attempt += 1) {
-      // eslint-disable-next-line no-await-in-loop
-      current = await api.resumeDocument(id);
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        current = await api.resumeDocument(id);
+      } catch (err) {
+        // A request can die (an edge timeout, a dropped connection) *after*
+        // the server already saved chunks — the work isn't lost, only the
+        // response is. Re-read the document: if it moved forward, carry on
+        // as if nothing happened. Only give up if it genuinely didn't.
+        // eslint-disable-next-line no-await-in-loop
+        const refetched = await api.getDocument(id).catch(() => null);
+        if (!refetched || (refetched.extraction?.completedChunks ?? 0) <= lastCompleted) throw err;
+        current = refetched;
+      }
+
       setDocuments((prev) => prev.map((d) => (d._id === id ? current : d)));
       if (current.status !== 'processing') break;
+
+      const completed = current.extraction?.completedChunks ?? 0;
+      if (completed <= lastCompleted) {
+        // Still 'processing' but no forward progress — stop rather than
+        // hammer the server in a loop that can't finish.
+        throw new Error('Reading stalled partway through this document. The parts already read are saved — retry to continue.');
+      }
+      lastCompleted = completed;
     }
     return current;
   }, []);
