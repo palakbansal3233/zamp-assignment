@@ -34,9 +34,17 @@ async function main() {
   const { createApp } = require('../src/app');
   const app = createApp();
   const server = http.createServer(app);
-  const port = 5099;
-  await new Promise((resolve) => server.listen(port, resolve));
-  const base = `http://localhost:${port}`;
+  // Port 0 = let the OS pick a free one. Nothing outside this process ever
+  // connects to this server, so a fixed port buys nothing and costs a lot:
+  // if it's already taken, `listen` emits an unhandled 'error' and the run
+  // hangs silently forever instead of failing. (Learned the hard way — an
+  // earlier eval process left over from a previous run held the port and
+  // every subsequent run just sat there.)
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, resolve);
+  });
+  const base = `http://localhost:${server.address().port}`;
 
   try {
     console.log(`Seeding ${FIXTURES.length} fixture documents through the real upload/extraction path...\n`);
@@ -113,7 +121,7 @@ async function main() {
     console.log('='.repeat(50));
     console.log('\nThis is a sanity check, not a submission gate — see decisions.md.');
   } finally {
-    server.close();
+    await new Promise((resolve) => server.close(resolve));
     await mongod.stop();
   }
 }
