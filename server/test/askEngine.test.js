@@ -1,7 +1,14 @@
 const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 const Document = require('../src/models/Document');
-const { verifyCitations, computeConflicts } = require('../src/services/askEngine');
+const { verifyCitations: verifyCitationsRaw, computeConflicts } = require('../src/services/askEngine');
+const { withSession } = require('./helpers/session');
+
+// Documents are scoped to a visitor's session. Going through HTTP establishes
+// one from the request; calling the service directly, as these tests do, has
+// to supply it — so both the seeding and the call under test run inside the
+// same session rather than each call site having to remember.
+const verifyCitations = (...args) => withSession(() => verifyCitationsRaw(...args));
 
 // verifyCitations is the single most important safety property in the ask
 // pipeline: a citation only counts if it resolves to a real, done document
@@ -17,7 +24,7 @@ describe('verifyCitations', () => {
   }, 60000);
 
   beforeEach(async () => {
-    doc = await Document.create({
+    doc = await withSession(() => Document.create({
       filename: 'invoice.pdf',
       mimeType: 'application/pdf',
       sizeBytes: 10,
@@ -26,7 +33,7 @@ describe('verifyCitations', () => {
         { key: 'total_due', label: 'Total Due', value: 500, sensitive: false },
         { key: 'account_number', label: 'Account', value: '4471-2298', sensitive: true },
       ],
-    });
+    }));
   });
 
   afterEach(async () => {
@@ -63,7 +70,7 @@ describe('verifyCitations', () => {
   });
 
   test('drops a citation pointing at a document that is not status "done"', async () => {
-    const processing = await Document.create({ filename: 'x.pdf', mimeType: 'application/pdf', sizeBytes: 5, status: 'processing', fields: [{ key: 'a', value: 1 }] });
+    const processing = await withSession(() => Document.create({ filename: 'x.pdf', mimeType: 'application/pdf', sizeBytes: 5, status: 'processing', fields: [{ key: 'a', value: 1 }] }));
     const out = await verifyCitations([{ document_id: String(processing._id), field_key: 'a' }]);
     expect(out).toEqual([]);
   });

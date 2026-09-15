@@ -1,4 +1,4 @@
-const request = require('supertest');
+const { request, withSession, TEST_SESSION, OTHER_SESSION } = require('./helpers/session');
 const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 
@@ -42,8 +42,8 @@ afterAll(async () => {
   await mongod.stop();
 });
 
-async function seedInvoice(fields) {
-  return Document.create({
+async function seedInvoice(fields, sessionId = TEST_SESSION) {
+  return withSession(() => Document.create({
     filename: 'invoice.pdf',
     mimeType: 'application/pdf',
     sizeBytes: 10,
@@ -51,7 +51,7 @@ async function seedInvoice(fields) {
     docType: 'invoice',
     summary: 'An invoice.',
     fields,
-  });
+  }), sessionId);
 }
 
 describe('POST /ask', () => {
@@ -117,10 +117,10 @@ describe('POST /ask', () => {
 
   test('surfaces a real conflict caveat when verified citations disagree across documents', async () => {
     const docA = await seedInvoice([{ key: 'price_escalator', label: 'Price Escalator', value: 'CPI + 2%' }]);
-    const docB = await Document.create({
+    const docB = await withSession(() => Document.create({
       filename: 'msa.pdf', mimeType: 'application/pdf', sizeBytes: 10, status: 'done', docType: 'contract',
       fields: [{ key: 'price_escalator', label: 'Price Escalator', value: '4%' }],
-    });
+    }));
     askModel.mockResolvedValue({
       refused: false, refusal_reason: null, answer: 'The escalator is CPI + 2% per the contract.',
       citations: [{ document_id: String(docA._id), field_key: 'price_escalator' }, { document_id: String(docB._id), field_key: 'price_escalator' }],
@@ -157,13 +157,13 @@ describe('GET /ask/suggestions', () => {
     expect(res.body.questions).toEqual([{ text: 'What is the total due?', docTypes: ['invoice'] }]);
     expect(generateSuggestions).toHaveBeenCalledTimes(1);
 
-    const cached = await SuggestionCache.findById('singleton').lean();
+    const cached = await SuggestionCache.findById(TEST_SESSION).lean();
     expect(cached.fingerprint).toBe('fp-1');
   });
 
   test('serves the cache without re-calling the model when the fingerprint is unchanged', async () => {
     await seedInvoice([{ key: 'total_due', label: 'Total Due', value: 500 }]);
-    await SuggestionCache.create({ _id: 'singleton', fingerprint: 'fp-same', questions: [{ text: 'Cached question?', docTypes: [] }] });
+    await SuggestionCache.create({ _id: TEST_SESSION, fingerprint: 'fp-same', questions: [{ text: 'Cached question?', docTypes: [] }] });
     computeCorpusFingerprint.mockResolvedValue('fp-same');
 
     const res = await request(app).get('/ask/suggestions');
@@ -184,7 +184,7 @@ describe('GET /ask/suggestions', () => {
 
     const first = await request(app).get('/ask/suggestions');
     expect(first.body.questions).toEqual([]);
-    expect(await SuggestionCache.findById('singleton').lean()).toBeNull();
+    expect(await SuggestionCache.findById(TEST_SESSION).lean()).toBeNull();
 
     // Same fingerprint, but the next request must try again rather than
     // serve the empty list back.
@@ -196,7 +196,7 @@ describe('GET /ask/suggestions', () => {
 
   test('a stale empty cache is not trusted either', async () => {
     await seedInvoice([{ key: 'total_due', label: 'Total Due', value: 500 }]);
-    await SuggestionCache.create({ _id: 'singleton', fingerprint: 'fp-same', questions: [] });
+    await SuggestionCache.create({ _id: TEST_SESSION, fingerprint: 'fp-same', questions: [] });
     computeCorpusFingerprint.mockResolvedValue('fp-same');
     generateSuggestions.mockResolvedValue([{ text: 'Recovered question?', docTypes: ['invoice'] }]);
 

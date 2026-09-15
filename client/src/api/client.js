@@ -5,14 +5,24 @@
 // request that never reached the server at all) so callers that need to
 // tell "not found" apart from "something broke" — e.g. a document that was
 // deleted out from under an open tab — don't have to string-match a message.
+import { getSessionId } from './session';
+
 const BASE = '/api';
 
 async function request(path, options = {}) {
   let res;
   try {
     res = await fetch(`${BASE}${path}`, {
-      headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
       ...options,
+      // Every request names the workspace it belongs to. Without this the
+      // server would mint a new session per request and nothing would ever
+      // be found again — and, more importantly, documents would not be
+      // anyone's in particular.
+      headers: {
+        ...(options.body ? { 'Content-Type': 'application/json' } : null),
+        'X-Sift-Session': getSessionId(),
+        ...options.headers,
+      },
     });
   } catch (networkErr) {
     // fetch itself threw — offline, DNS failure, CORS, server unreachable.

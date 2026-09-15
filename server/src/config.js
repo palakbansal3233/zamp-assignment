@@ -43,6 +43,13 @@ const config = {
   // own knob since the corpus-digest prompt has different size/latency
   // characteristics than a single document's extraction.
   askTimeoutMs: parseInt(process.env.ASK_TIMEOUT_MS || '25000', 10),
+  // How long a visitor's documents survive without a goodbye. This is only
+  // a backstop: the client deletes its own data when the tab goes away, and
+  // this catches what a beacon can't (a crashed browser, a killed mobile
+  // tab, no network at the moment of leaving). Two hours is long enough to
+  // read a lease without losing your place, short enough that "we don't keep
+  // your documents" stays true.
+  sessionTtlMs: parseInt(process.env.SESSION_TTL_MS || String(2 * 60 * 60 * 1000), 10),
   nodeEnv: process.env.NODE_ENV || 'development',
 };
 

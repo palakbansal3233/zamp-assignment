@@ -1,4 +1,6 @@
 const Document = require('../models/Document');
+const SuggestionCache = require('../models/SuggestionCache');
+const { getSessionId } = require('../middleware/sessionContext');
 const { config } = require('../config');
 const { classifyFile } = require('../services/fileTypes');
 const { extractStructuredData } = require('../services/extraction');
@@ -319,6 +321,24 @@ async function deleteDocument(req, res) {
 }
 
 /**
+ * Wipes everything belonging to the current session.
+ *
+ * This is what the client calls as the tab goes away, so a visitor's
+ * documents don't outlive their visit. It's deliberately idempotent and
+ * always 204s — it is called from a `sendBeacon` during page teardown, where
+ * nothing is left alive to read a response, let alone handle an error.
+ */
+async function endSession(req, res) {
+  // The session scoping in models/Document.js turns this into a delete of
+  // exactly this visitor's documents, never anyone else's.
+  await Promise.all([
+    Document.deleteMany({}),
+    SuggestionCache.deleteOne({ _id: getSessionId() }),
+  ]);
+  res.status(204).end();
+}
+
+/**
  * Continues reading a document that isn't finished yet — the other half of
  * chunked extraction. `POST /documents/:id/resume` picks up at
  * `nextChunkIndex`; `POST /documents/:id/retry` starts the whole document
@@ -376,6 +396,7 @@ module.exports = {
   getDocument,
   getDocumentFile,
   deleteDocument,
+  endSession,
   retryDocument,
   resumeDocument,
   confirmField,

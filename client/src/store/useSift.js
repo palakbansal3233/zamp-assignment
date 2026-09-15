@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useSiftDemo } from './useSiftDemo';
 import { useToasts } from '../hooks/useToasts';
 import * as api from '../api/client';
+import { endSessionOnUnload } from '../api/session';
 import { buildProvenanceLines } from '../utils/provenance';
 import { SCENARIOS } from '../mock/data';
 
@@ -148,6 +149,24 @@ export function useSift() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  // Your documents leave when you do.
+  //
+  // `pagehide` rather than `beforeunload`: beforeunload is unreliable on
+  // mobile, where a tab is usually discarded rather than closed, and it
+  // can't be trusted to fire at all on iOS. pagehide covers the ways a page
+  // actually goes away in practice. `visibilitychange` is deliberately NOT
+  // used — switching tabs to look something up would wipe your work.
+  //
+  // This is best-effort by nature (a crashed browser says nothing), which is
+  // why the server also expires a session's documents on a TTL. Belt and
+  // braces, because "it deleted my documents, probably" isn't a privacy
+  // promise worth making.
+  useEffect(() => {
+    const goodbye = () => endSessionOnUnload();
+    window.addEventListener('pagehide', goodbye);
+    return () => window.removeEventListener('pagehide', goodbye);
   }, []);
 
   useEffect(() => {

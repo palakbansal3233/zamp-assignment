@@ -1,4 +1,5 @@
 const { buildCorpusDigest } = require('../services/corpusDigest');
+const { getSessionId } = require('../middleware/sessionContext');
 const {
   askModel,
   verifyCitations,
@@ -75,7 +76,7 @@ async function askQuestion(req, res) {
 
 async function getSuggestions(req, res) {
   const fingerprint = await computeCorpusFingerprint();
-  const cached = await SuggestionCache.findById('singleton').lean();
+  const cached = await SuggestionCache.findById(getSessionId()).lean();
 
   // An empty cached list is never worth trusting — see below.
   if (cached && cached.fingerprint === fingerprint && cached.questions.length > 0) {
@@ -94,7 +95,7 @@ async function getSuggestions(req, res) {
   // case costs one retried call and lets it heal itself.
   if (questions.length > 0) {
     await SuggestionCache.findByIdAndUpdate(
-      'singleton',
+      getSessionId(),
       { fingerprint, questions, generatedAt: new Date() },
       { upsert: true }
     );

@@ -7,6 +7,8 @@ const documentsRouter = require('./routes/documents');
 const queryRouter = require('./routes/query');
 const healthRouter = require('./routes/health');
 const askRouter = require('./routes/ask');
+const sessionRouter = require('./routes/session');
+const { sessionMiddleware } = require('./middleware/sessionContext');
 
 /**
  * The "core" Express app, deliberately defined WITHOUT an /api prefix on its
@@ -42,7 +44,12 @@ function createApp() {
     }
   });
 
+  // Establishes which visitor this request belongs to, before any route can
+  // touch the database. Everything below is scoped to it.
+  app.use(sessionMiddleware);
+
   app.use('/health', healthRouter);
+  app.use('/session', sessionRouter);
   app.use('/documents', documentsRouter);
   app.use('/query', queryRouter);
   app.use('/ask', askRouter);

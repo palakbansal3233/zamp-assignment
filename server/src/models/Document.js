@@ -1,4 +1,6 @@
 const mongoose = require('mongoose');
+const { config } = require('../config');
+const { getSessionId } = require('../middleware/sessionContext');
 
 const { Schema } = mongoose;
 
@@ -51,6 +53,16 @@ const FieldSchema = new Schema(
 
 const DocumentSchema = new Schema(
   {
+    // Which visitor's workspace this belongs to. Everything in this file is
+    // scoped by it — see the query middleware at the bottom.
+    sessionId: { type: String, required: true, index: true },
+
+    // A backstop for cleanup, not the primary mechanism. The client deletes
+    // its own documents when the tab goes away; this catches the cases a
+    // beacon can't (a crashed browser, a killed mobile tab, a lost network)
+    // so nothing lingers indefinitely just because a goodbye was missed.
+    expiresAt: { type: Date, default: () => new Date(Date.now() + config.sessionTtlMs), index: { expires: 0 } },
+
     filename: { type: String, required: true },
     mimeType: { type: String, required: true },
     sizeBytes: { type: Number, required: true },
@@ -140,5 +152,38 @@ const DocumentSchema = new Schema(
     minimize: false,
   }
 );
+
+// ── session scoping ───────────────────────────────────────────────────────
+// Enforced here rather than in each controller on purpose: there are around
+// twenty query sites, and a single forgotten `.find()` would leak one
+// visitor's documents to another. A rule that must hold everywhere belongs
+// in one place that cannot be bypassed by forgetting, so queries inherit it
+// whether or not the caller thought about it.
+const SCOPED_QUERIES = [
+  'find', 'findOne', 'findOneAndUpdate', 'findOneAndDelete', 'findOneAndReplace',
+  'countDocuments', 'distinct', 'deleteMany', 'deleteOne', 'updateMany', 'updateOne',
+];
+
+DocumentSchema.pre(SCOPED_QUERIES, function scopeToSession() {
+  const sessionId = getSessionId();
+  // Outside a request (a migration, a one-off script) there is no session to
+  // scope to. Filtering on `undefined` would silently match nothing and look
+  // like data loss, so leave the query alone — every HTTP path goes through
+  // sessionMiddleware and therefore always has one.
+  if (!sessionId) return;
+  this.setQuery({ ...this.getQuery(), sessionId });
+});
+
+// pre('validate'), not pre('save'): Mongoose runs validation as its own
+// built-in pre-save hook before user hooks, so stamping on save would land
+// after 'sessionId is required' had already failed.
+DocumentSchema.pre('validate', function stampSession(next) {
+  if (!this.sessionId) {
+    const sessionId = getSessionId();
+    if (!sessionId) return next(new Error('Refusing to save a document with no session — it would be visible to nobody.'));
+    this.sessionId = sessionId;
+  }
+  next();
+});
 
 module.exports = mongoose.model('Document', DocumentSchema);

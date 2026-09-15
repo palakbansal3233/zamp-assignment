@@ -1,4 +1,4 @@
-const request = require('supertest');
+const { request, withSession, TEST_SESSION, OTHER_SESSION } = require('./helpers/session');
 const mongoose = require('mongoose');
 const { MongoMemoryServer } = require('mongodb-memory-server');
 
@@ -626,5 +626,92 @@ describe('GET /query', () => {
     const res = await request(app).get('/query');
     expect(res.status).toBe(200);
     expect(res.body.modeUsed).toBe('none');
+  });
+});
+
+// The privacy property the whole session mechanism exists for. Sift is one
+// public link: without this, sending someone that link hands them your
+// tenancy agreement. These tests are written against the *observable*
+// behaviour rather than the implementation, so they'd still catch a leak if
+// the enforcement were ever moved or rewritten.
+describe('session isolation', () => {
+  async function uploadAs(sessionId, filename) {
+    extractStructuredData.mockResolvedValue({
+      unreadable: false, unreadableReason: null, docType: 'receipt',
+      summary: 'A receipt.', documentText: 'text', fields: [field('total', 10)],
+    });
+    return request(app, sessionId)
+      .post('/documents')
+      .send({ filename, mimeType: 'text/plain', dataBase64: Buffer.from('hi').toString('base64') });
+  }
+
+  test('one visitor never sees another visitor’s documents', async () => {
+    await uploadAs(TEST_SESSION, 'mine.txt');
+    await uploadAs(OTHER_SESSION, 'theirs.txt');
+
+    const mine = await request(app, TEST_SESSION).get('/documents');
+    const theirs = await request(app, OTHER_SESSION).get('/documents');
+
+    expect(mine.body.items.map((d) => d.filename)).toEqual(['mine.txt']);
+    expect(theirs.body.items.map((d) => d.filename)).toEqual(['theirs.txt']);
+  });
+
+  test('a document cannot be opened by id from another session', async () => {
+    const created = (await uploadAs(TEST_SESSION, 'private.txt')).body;
+
+    // Knowing the id is not enough — this is the case that matters, because
+    // an id can be shared, guessed from a link, or left in someone's history.
+    const asOther = await request(app, OTHER_SESSION).get(`/documents/${created._id}`);
+    expect(asOther.status).toBe(404);
+    // ...and the owner still gets it.
+    expect((await request(app, TEST_SESSION).get(`/documents/${created._id}`)).status).toBe(200);
+  });
+
+  test('a document cannot be deleted from another session', async () => {
+    const created = (await uploadAs(TEST_SESSION, 'private.txt')).body;
+    expect((await request(app, OTHER_SESSION).delete(`/documents/${created._id}`)).status).toBe(404);
+    expect((await request(app, TEST_SESSION).get(`/documents/${created._id}`)).status).toBe(200);
+  });
+
+  test('search and ask never reach across sessions', async () => {
+    await uploadAs(TEST_SESSION, 'mine.txt');
+    buildSmartQuery.mockRejectedValue(new ExtractionConfigError('not configured'));
+
+    const q = await request(app, OTHER_SESSION).get('/query').query({ q: 'receipt' });
+    expect(q.body.items).toHaveLength(0);
+
+    // With nothing of their own, the other session's corpus is empty, so Ask
+    // refuses rather than answering from someone else's documents.
+    const ask = await request(app, OTHER_SESSION).post('/ask').send({ question: 'What is the total?' });
+    expect(ask.body.refused).toBe(true);
+  });
+
+  test('a fresh visitor with no session header starts empty, not in someone else’s workspace', async () => {
+    await uploadAs(TEST_SESSION, 'mine.txt');
+    // No X-Sift-Session header at all — what the very first request from a
+    // new browser looks like.
+    const res = await require('supertest')(app).get('/documents');
+    expect(res.status).toBe(200);
+    expect(res.body.items).toEqual([]);
+    // The server hands back the session it minted, so the client can adopt it.
+    expect(res.headers['x-sift-session']).toMatch(/^[a-f0-9]{32,}$/);
+  });
+
+  test('ending a session deletes that visitor’s documents and nobody else’s', async () => {
+    await uploadAs(TEST_SESSION, 'mine.txt');
+    await uploadAs(OTHER_SESSION, 'theirs.txt');
+
+    // POST, because this is what navigator.sendBeacon can send on teardown.
+    const res = await request(app, TEST_SESSION).post('/session/end');
+    expect(res.status).toBe(204);
+
+    expect((await request(app, TEST_SESSION).get('/documents')).body.items).toEqual([]);
+    expect((await request(app, OTHER_SESSION).get('/documents')).body.items.map((d) => d.filename)).toEqual(['theirs.txt']);
+  });
+
+  test('ending a session twice is not an error — teardown gets no second chance to handle one', async () => {
+    await uploadAs(TEST_SESSION, 'mine.txt');
+    expect((await request(app, TEST_SESSION).post('/session/end')).status).toBe(204);
+    expect((await request(app, TEST_SESSION).post('/session/end')).status).toBe(204);
   });
 });
