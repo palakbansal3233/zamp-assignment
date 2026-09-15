@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { SAMPLE_DOCUMENTS } from '../../sampleDocuments';
+import { groupByCategory } from '../../utils/categories';
 
 function QueueRow({ item, onOpen }) {
   const rowClass = `queue-row${item.status === 'pending' ? ' is-pending' : ''}${item.status === 'failed' ? ' is-failed' : ''}`;
@@ -90,7 +91,7 @@ export default function IngestScreen({ ingest }) {
         </div>
       </div>
 
-      <div className="ingest-body">
+      <div className={`ingest-body${ingest.items.length === 0 ? ' is-empty' : ''}`}>
         {hasRealUpload && (
           <input
             ref={fileInputRef}
@@ -145,17 +146,55 @@ export default function IngestScreen({ ingest }) {
           </div>
         )}
 
-        <div className="queue-heading-row">
-          <h6>Your documents</h6>
-          <span className="ready-label text-muted">{ingest.readyLabel}</span>
-        </div>
-
-        <div className="queue-list">
-          {ingest.items.map((item) => (
-            <QueueRow key={item.id} item={item} onOpen={ingest.openDoc} />
-          ))}
-        </div>
+        {/* Nothing here yet is a normal, frequent state — especially now
+            that every visit starts empty on purpose. It deserves an actual
+            message rather than a heading over a void. */}
+        {ingest.items.length === 0 ? null : (
+          <>
+            <div className="queue-heading-row">
+              <h6>Your documents</h6>
+              {ingest.readyLabel && <span className="ready-label text-muted">{ingest.readyLabel}</span>}
+            </div>
+            <DocumentList items={ingest.items} onOpen={ingest.openDoc} />
+          </>
+        )}
       </div>
     </>
+  );
+}
+
+/**
+ * Groups documents under the category they were sorted into, so a long list
+ * reads as "your agreements, your bills, your health stuff" rather than one
+ * undifferentiated pile. Falls back to a plain list when nothing carries a
+ * category (the demo fixtures don't) — a single heading over a single group
+ * is just noise.
+ */
+function DocumentList({ items, onOpen }) {
+  const groups = groupByCategory(items);
+
+  if (!groups) {
+    return (
+      <div className="queue-list">
+        {items.map((item) => <QueueRow key={item.id} item={item} onOpen={onOpen} />)}
+      </div>
+    );
+  }
+
+  return (
+    <div className="queue-groups">
+      {groups.map((group) => (
+        <section key={group.id} className="queue-group">
+          <div className="queue-group-head">
+            <i className={`${group.icon} queue-group-icon`} />
+            <span className="queue-group-label">{group.label}</span>
+            <span className="queue-group-count">{group.items.length}</span>
+          </div>
+          <div className="queue-list">
+            {group.items.map((item) => <QueueRow key={item.id} item={item} onOpen={onOpen} />)}
+          </div>
+        </section>
+      ))}
+    </div>
   );
 }

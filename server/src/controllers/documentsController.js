@@ -254,6 +254,11 @@ async function listDocuments(req, res) {
     Document.countDocuments({}),
   ]);
 
+  // The app loads this on every boot, which makes it the natural place to
+  // say "still here" — and so the thing that cancels a pending goodbye left
+  // behind by a reload.
+  if (total > 0) await touchSession();
+
   res.json({ items, total, page, limit, totalPages: Math.max(1, Math.ceil(total / limit)) });
 }
 
@@ -329,13 +334,31 @@ async function deleteDocument(req, res) {
  * nothing is left alive to read a response, let alone handle an error.
  */
 async function endSession(req, res) {
-  // The session scoping in models/Document.js turns this into a delete of
-  // exactly this visitor's documents, never anyone else's.
+  // Schedules the end rather than performing it, because `pagehide` cannot
+  // tell "closed the tab" from "pressed reload" — and deleting outright made
+  // a refresh destroy everything the person had uploaded. Instead the
+  // session is set to expire shortly; a tab that comes back cancels that
+  // simply by loading (see `touchSession`), and one that doesn't is swept by
+  // the TTL index.
+  //
+  // The session scoping in models/Document.js keeps this to exactly this
+  // visitor's documents, never anyone else's.
+  const expiresAt = new Date(Date.now() + config.sessionGraceMs);
   await Promise.all([
-    Document.deleteMany({}),
-    SuggestionCache.deleteOne({ _id: getSessionId() }),
+    Document.updateMany({}, { $set: { expiresAt } }),
+    SuggestionCache.updateOne({ _id: getSessionId() }, { $set: { expiresAt } }),
   ]);
   res.status(204).end();
+}
+
+/**
+ * Pushes this session's expiry back out to the full TTL. Called whenever the
+ * visitor is demonstrably still here, which cancels any pending goodbye from
+ * a reload.
+ */
+async function touchSession() {
+  const expiresAt = new Date(Date.now() + config.sessionTtlMs);
+  await Document.updateMany({}, { $set: { expiresAt } });
 }
 
 /**
@@ -397,6 +420,7 @@ module.exports = {
   getDocumentFile,
   deleteDocument,
   endSession,
+  touchSession,
   retryDocument,
   resumeDocument,
   confirmField,

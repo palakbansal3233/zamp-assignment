@@ -14,13 +14,22 @@ async function askQuestion(req, res) {
   const question = String((req.body && req.body.question) || '').trim();
   if (!question) throw new HttpError(400, 'Missing "question".');
 
-  const digest = await buildCorpusDigest({ questionForPrefilter: question });
+  // Asking *one* document is a different promise from asking everything:
+  // the model only ever sees that document, so an answer drawn from
+  // elsewhere isn't just discouraged, it's impossible.
+  const documentId = req.body && req.body.documentId ? String(req.body.documentId) : null;
+  const digest = await buildCorpusDigest(
+    documentId ? { documentId } : { questionForPrefilter: question }
+  );
 
   if (digest.length === 0) {
     return res.json({
       question,
+      documentId,
       refused: true,
-      reason: 'No documents have been read yet.',
+      reason: documentId
+        ? 'That document has not been read yet, so there is nothing to answer from.'
+        : 'No documents have been read yet.',
       answer: null,
       citations: [],
       caveats: [],
@@ -30,7 +39,7 @@ async function askQuestion(req, res) {
   }
 
   const raw = await askModel(question, digest);
-  const verified = await verifyCitations(raw.citations);
+  const verified = await verifyCitations(raw.citations, { onlyDocumentId: documentId });
 
   // The core safety rule: a non-refused answer with zero surviving
   // citations is not a grounded answer, it's a guess that happened to cite
@@ -41,10 +50,13 @@ async function askQuestion(req, res) {
   if (refused) {
     return res.json({
       question,
+      documentId,
       refused: true,
       reason: raw.refusal_reason || (verified.length === 0 && !raw.refused
         ? 'The proposed citations did not check out against the stored documents.'
-        : 'Nothing in the corpus supports an answer.'),
+        : documentId
+          ? 'Nothing in this document supports an answer.'
+          : 'Nothing in your documents supports an answer.'),
       answer: null,
       citations: [],
       caveats: [],
@@ -58,6 +70,7 @@ async function askQuestion(req, res) {
 
   res.json({
     question,
+    documentId,
     refused: false,
     answer: raw.answer,
     citations: verified.map((c) => ({

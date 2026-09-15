@@ -25,9 +25,19 @@ function request(app, sessionId = TEST_SESSION) {
   };
 }
 
-/** Run direct model work (seeding, unit-testing a service) inside a session. */
-function withSession(fn, sessionId = TEST_SESSION) {
-  return runWithSession(sessionId, fn);
+/**
+ * Run direct model work (seeding, unit-testing a service) inside a session.
+ *
+ * The `await` inside matters and is not tidiness. A Mongoose query is lazy:
+ * `() => Document.find({})` merely *builds* one and returns it, so without
+ * awaiting here the AsyncLocalStorage context would be gone by the time the
+ * query actually ran, and the scoping hook would see no session and quietly
+ * skip — handing back every session's documents. Awaiting inside keeps
+ * execution within the context, which is exactly what Express does in
+ * production by holding the context open across the whole request.
+ */
+async function withSession(fn, sessionId = TEST_SESSION) {
+  return runWithSession(sessionId, async () => fn());
 }
 
 module.exports = { request, withSession, TEST_SESSION, OTHER_SESSION };

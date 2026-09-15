@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Document = require('../models/Document');
 
 const MAX_DOCS = 50;
@@ -18,6 +19,11 @@ const MAX_FIELDS_PER_DOC = 40;
  *   the existing $text index rather than arbitrarily truncating by recency.
  * @param {number} [opts.maxDocs]
  * @param {number} [opts.maxFieldsPerDoc]
+ * @param {string} [opts.documentId] - restrict the digest to a single
+ *   document. This is what makes "Ask this document" mean it: the model is
+ *   never shown the rest of the corpus, so it cannot answer from a document
+ *   the person wasn't looking at, and a citation to one is impossible rather
+ *   than merely discouraged.
  */
 async function buildCorpusDigest(opts = {}) {
   const maxDocs = opts.maxDocs || MAX_DOCS;
@@ -25,6 +31,14 @@ async function buildCorpusDigest(opts = {}) {
   const projection = 'filename docType summary fields';
 
   let docs;
+
+  // Scoped to one document: no prefilter, no recency fallback, no corpus.
+  if (opts.documentId) {
+    if (!mongoose.isValidObjectId(opts.documentId)) return [];
+    docs = await Document.find({ _id: opts.documentId, status: 'done' }, projection).lean();
+    return docs.map(toDigestEntry(maxFieldsPerDoc));
+  }
+
   const total = await Document.countDocuments({ status: 'done' });
   if (total > maxDocs && opts.questionForPrefilter) {
     docs = await Document.find({ status: 'done', $text: { $search: opts.questionForPrefilter } }, projection)
@@ -41,7 +55,11 @@ async function buildCorpusDigest(opts = {}) {
     docs = await Document.find({ status: 'done' }, projection).sort({ createdAt: -1 }).limit(maxDocs).lean();
   }
 
-  return docs.map((doc) => ({
+  return docs.map(toDigestEntry(maxFieldsPerDoc));
+}
+
+function toDigestEntry(maxFieldsPerDoc) {
+  return (doc) => ({
     documentId: String(doc._id),
     filename: doc.filename,
     docType: doc.docType,
@@ -52,7 +70,7 @@ async function buildCorpusDigest(opts = {}) {
       value: f.value,
       sensitive: Boolean(f.sensitive),
     })),
-  }));
+  });
 }
 
 module.exports = { buildCorpusDigest, MAX_DOCS, MAX_FIELDS_PER_DOC };

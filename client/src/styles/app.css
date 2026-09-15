@@ -65,28 +65,50 @@ a:hover { color: var(--color-accent-200); }
 
 /* ── ingest ── */
 .ingest-header {
-  padding: var(--space-8) var(--space-8) var(--space-6); display: flex; align-items: flex-end;
-  justify-content: space-between; gap: var(--space-6);
+  padding: var(--space-8) var(--space-10) var(--space-5); display: flex; align-items: flex-end;
+  justify-content: space-between; gap: var(--space-8);
 }
 .ingest-header h6 { margin: 0 0 var(--space-2); color: var(--color-neutral-500); }
 .ingest-header h3 { margin: 0; }
-.ingest-body { flex: 1; min-height: 0; overflow: auto; padding: 0 var(--space-8) var(--space-8); }
+.ingest-body {
+  flex: 1; min-height: 0; overflow: auto;
+  /* Top padding is not decoration: the dropzone lifts on hover, and without
+     room above it the lift clipped its own top edge against this scroll
+     container — which read as the top of the box vanishing. */
+  /* The bottom padding clears the chat launcher, which floats over this
+     column's bottom-left corner — content must never end up underneath it. */
+  padding: var(--space-3) var(--space-10) 76px;
+  display: flex; flex-direction: column; gap: var(--space-6);
+}
 
 .dropzone {
-  border: 1px dashed var(--color-accent-700); border-radius: var(--radius-lg); padding: var(--space-8);
-  display: flex; flex-direction: column; align-items: center; gap: var(--space-3); cursor: pointer;
+  border: 1.5px dashed var(--color-accent-700); border-radius: var(--radius-lg);
+  padding: var(--space-10) var(--space-8);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--space-4); cursor: pointer;
   background: radial-gradient(120% 140% at 50% 0%, rgba(145,132,217,0.09), transparent 70%);
+  /* The main thing on the page when there's nothing else, and still a
+     comfortable target once documents exist. */
+  min-height: 210px;
 }
+/* With an empty list there is nothing below to give the page weight, so the
+   dropzone grows — but only to a point. Letting it flex freely swallowed the
+   whole column and pushed the sample chips off the bottom, which traded one
+   layout problem for a worse one. It gets a generous band and the column
+   centres the rest. */
+.ingest-body.is-empty { justify-content: center; gap: var(--space-5); }
+.ingest-body.is-empty .dropzone { flex: 0 1 auto; min-height: 280px; max-height: 420px; }
+.ingest-body.is-empty .sample-row { justify-content: center; }
 .dropzone:hover { border-color: var(--color-accent); }
 .dropzone.is-disabled { border-color: var(--color-neutral-800); opacity: 0.55; cursor: not-allowed; }
 .dropzone.is-drag-active { border-color: var(--color-accent); background: rgba(145,132,217,0.14); }
-.dropzone-icon { font-size: 26px; color: var(--color-accent-300); }
-.dropzone-title { font-family: var(--font-heading); font-size: 16px; }
-.dropzone-note { font-size: 13px; text-align: center; text-wrap: pretty; }
+.dropzone-icon { font-size: 34px; color: var(--color-accent-300); }
+.dropzone-title { font-family: var(--font-heading); font-size: 19px; }
+.dropzone-note { font-size: 13.5px; text-align: center; text-wrap: pretty; max-width: 46ch; }
 
 .sample-row {
-  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
-  margin-top: var(--space-4); font-size: 0.85rem;
+  display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
+  margin-top: 0; font-size: 0.85rem;
 }
 .sample-row__label { font-size: 12px; }
 .sample-chip {
@@ -95,12 +117,12 @@ a:hover { color: var(--color-accent-200); }
 }
 .sample-chip:hover { border-color: var(--color-accent-700); color: var(--color-accent-200); }
 
-.queue-heading-row { display: flex; align-items: baseline; justify-content: space-between; margin: var(--space-8) 0 var(--space-3); }
+.queue-heading-row { display: flex; align-items: baseline; justify-content: space-between; margin: var(--space-2) 0 0; }
 .queue-heading-row h6 { margin: 0; color: var(--color-neutral-500); }
 .queue-heading-row .ready-label { font-size: 12px; }
 
-.queue-list { display: flex; flex-direction: column; gap: var(--space-2); }
-.queue-row { padding: var(--space-4) var(--space-6); border: 1px solid var(--color-neutral-900); border-radius: var(--radius-md); background: var(--color-surface); }
+.queue-list { display: flex; flex-direction: column; gap: var(--space-3); }
+.queue-row { padding: var(--space-5) var(--space-6); border: 1px solid var(--color-neutral-900); border-radius: var(--radius-md); background: var(--color-surface); }
 .queue-row.is-pending { opacity: 0.72; }
 .queue-row.is-failed { border-color: var(--color-accent-800); background: rgba(145,132,217,0.05); }
 .queue-row-main { display: flex; align-items: center; gap: var(--space-4); }
@@ -296,8 +318,12 @@ a:hover { color: var(--color-accent-200); }
 .state-btn-note { font-size: 11px; text-wrap: pretty; color: var(--color-neutral-500); }
 
 /* ── chat widget ── */
+/* Bottom-LEFT, not bottom-right: the deployed site carries a "Powered by
+   Netlify" badge pinned to the bottom-right corner, which sat directly on
+   top of the launcher. Nothing clever to be done about the badge, so the
+   widget moves. */
 .chat-panel {
-  position: absolute; right: var(--space-6); bottom: var(--space-6); width: 352px;
+  position: absolute; left: var(--space-6); bottom: var(--space-6); width: 372px;
   max-height: min(560px, calc(100vh - 48px)); display: flex; flex-direction: column;
   background: var(--color-surface); border: 1px solid var(--color-neutral-800); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg); z-index: 50; overflow: hidden;
@@ -341,7 +367,7 @@ a:hover { color: var(--color-accent-200); }
 .chat-send-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .chat-launcher {
-  position: absolute; right: var(--space-6); bottom: var(--space-6); z-index: 50;
+  position: absolute; left: var(--space-6); bottom: var(--space-6); z-index: 50;
   display: flex; align-items: center; gap: var(--space-2); background: var(--color-surface);
   border: 1px solid var(--color-accent-700); color: var(--color-accent-200); border-radius: 999px;
   padding: 9px 15px; cursor: pointer; font-family: var(--font-heading); font-size: 13px; box-shadow: var(--shadow-md);
@@ -426,6 +452,7 @@ a:hover { color: var(--color-accent-200); }
 
   /* A fixed-width chat panel overflows a 375px viewport. */
   .chat-panel { width: auto; left: var(--space-3); right: var(--space-3); max-width: none; }
+  .chat-launcher { left: var(--space-3); }
   .states-panel { left: var(--space-3); right: var(--space-3); width: auto; max-width: none; }
 }
 
@@ -491,9 +518,20 @@ a:hover { color: var(--color-accent-200); }
    so it's worth a beat of the eye being led there. */
 .doc-seg.is-lit { animation: sift-flare 620ms ease-out; }
 
-.dropzone { transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), border-color 180ms ease, background-color 180ms ease; }
-.dropzone:hover:not(.is-disabled) { transform: translateY(-2px); }
-.dropzone.is-drag-active { transform: scale(1.012); }
+/* Border, glow and background on hover — deliberately NOT transform. The
+   dropzone lives inside an `overflow: auto` column, so lifting it clipped
+   its own top edge against the scroll boundary: the box appeared to lose its
+   top. Colour and shadow say "this is a target" without moving anything. */
+.dropzone { transition: border-color 200ms ease, background-color 200ms ease, box-shadow 200ms ease; }
+.dropzone:hover:not(.is-disabled) {
+  border-color: var(--color-accent);
+  background-color: rgba(145,132,217,0.05);
+  box-shadow: inset 0 0 0 1px rgba(145,132,217,0.18), 0 0 28px -12px rgba(145,132,217,0.5);
+}
+.dropzone.is-drag-active {
+  border-style: solid;
+  box-shadow: inset 0 0 0 2px var(--color-accent), 0 0 34px -10px rgba(145,132,217,0.7);
+}
 .dropzone:hover:not(.is-disabled) .dropzone-icon { animation: sift-bob 1.6s ease-in-out infinite; }
 
 .rail-btn, .rail-states-btn { transition: background-color 160ms ease, color 160ms ease, transform 160ms ease; }
@@ -536,4 +574,25 @@ a:hover { color: var(--color-accent-200); }
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ── document categories ──────────────────────────────────────────────────
+   Extraction infers a free-form docType per document, which makes a great
+   label and a terrible organising principle — you get one heading per
+   document. These coarse buckets are the layer that turns a pile into
+   "your agreements, your bills, your health stuff". */
+.queue-groups { display: flex; flex-direction: column; gap: var(--space-7); }
+.queue-group { display: flex; flex-direction: column; gap: var(--space-3); }
+.queue-group-head {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding-bottom: var(--space-2); border-bottom: 1px solid var(--color-neutral-900);
+}
+.queue-group-icon { font-size: 15px; color: var(--color-accent-300); }
+.queue-group-label {
+  font-family: var(--font-heading); font-size: 12px; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--color-neutral-400);
+}
+.queue-group-count {
+  margin-left: auto; font-size: 11px; color: var(--color-neutral-500);
+  border: 1px solid var(--color-neutral-800); border-radius: 999px; padding: 1px 8px;
 }

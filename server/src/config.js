@@ -50,6 +50,14 @@ const config = {
   // read a lease without losing your place, short enough that "we don't keep
   // your documents" stays true.
   sessionTtlMs: parseInt(process.env.SESSION_TTL_MS || String(2 * 60 * 60 * 1000), 10),
+  // How long a session lives after the browser says goodbye.
+  //
+  // Not zero, and that's the whole point: `pagehide` fires when you close
+  // the tab AND when you simply reload the page. Deleting immediately meant
+  // pressing F5 destroyed everything you'd uploaded, which is a far worse
+  // bug than data outliving a visit by a few seconds. So leaving schedules
+  // the end, and a tab that comes back cancels it just by loading.
+  sessionGraceMs: parseInt(process.env.SESSION_GRACE_MS || '45000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
 };
 

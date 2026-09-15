@@ -4,6 +4,7 @@ import { useToasts } from '../hooks/useToasts';
 import * as api from '../api/client';
 import { endSessionOnUnload } from '../api/session';
 import { buildProvenanceLines } from '../utils/provenance';
+import { categoryFor } from '../utils/categories';
 import { SCENARIOS } from '../mock/data';
 
 // Real Sift engine — the Phase B replacement for useSiftDemo. It composes
@@ -260,6 +261,12 @@ export function useSift() {
       setInFlight((prev) => [...prev, { tempId, filename }]);
       try {
         let created = await factory();
+        // Drop the placeholder the moment the real document exists, not in
+        // the `finally` below. Reading a long document keeps this function
+        // running for another half-minute or more, and leaving the
+        // placeholder up meant a 10-page agreement showed *two* rows both
+        // saying "Reading…" — one real, one a ghost of itself.
+        setInFlight((prev) => prev.filter((u) => u.tempId !== tempId));
         setDocuments((prev) => [created, ...prev]);
         if (created.status === 'processing') {
           const id = created._id;
@@ -537,6 +544,7 @@ export function useSift() {
     }
     return {
       id: d._id, name: d.filename, kind: prettyDocType(d.docType), icon: iconForDocType(d.docType), clickable: true,
+      category: categoryFor(d.docType),
       sub: d.unreadable ? d.unreadableReason || 'Could not be read clearly.' : d.summary || '',
       status: 'done',
       fieldCount: `${(d.fields || []).length} details found`,
@@ -567,7 +575,15 @@ export function useSift() {
     onSample: (sample) => runUpload(sample.filename, () => api.uploadRawText(sample.filename, sample.text)),
     dropDisabled: false,
     dropNote: 'PDF, Word, a photo, a scan or plain text — nothing to set up first',
-    readyLabel: `${documents.filter((d) => d.status === 'done').length} ready to use${inFlight.length ? ` · ${inFlight.length} still reading` : ''}`,
+    // "0 ready to use" is a fact nobody needed. Say something only when
+    // there is something to say.
+    readyLabel: (() => {
+      const ready = documents.filter((d) => d.status === 'done').length;
+      const reading = inFlight.length + documents.filter((d) => d.status === 'processing').length;
+      if (reading) return `${reading} still reading${ready ? ` · ${ready} ready` : ''}`;
+      if (!ready) return '';
+      return `${ready} ready to use`;
+    })(),
     items: [...failedUploads, ...queueItems, ...pendingItems],
     openDoc,
     deleteAll: handleDeleteAllDocuments,

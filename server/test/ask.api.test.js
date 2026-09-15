@@ -146,6 +146,62 @@ describe('POST /ask', () => {
   });
 });
 
+// "Ask this document" has to mean this document. Scoping it by filtering the
+// answer afterwards would still let the model read everything else first;
+// the guarantee here is that the other documents are never in the prompt.
+describe('POST /ask (scoped to one document)', () => {
+  test('only the named document reaches the model', async () => {
+    const lease = await seedInvoice([{ key: 'notice_period', label: 'Notice Period', value: '60 days' }]);
+    await seedInvoice([{ key: 'notice_period', label: 'Notice Period', value: '30 days' }]);
+
+    askModel.mockResolvedValue({
+      refused: false, refusal_reason: null, answer: '60 days.',
+      citations: [{ document_id: String(lease._id), field_key: 'notice_period' }],
+    });
+
+    const res = await request(app).post('/ask').send({ question: 'What is my notice period?', documentId: String(lease._id) });
+
+    expect(res.status).toBe(200);
+    expect(res.body.documentId).toBe(String(lease._id));
+    // The digest handed to the model is the second argument.
+    const digest = askModel.mock.calls[0][1];
+    expect(digest).toHaveLength(1);
+    expect(digest[0].documentId).toBe(String(lease._id));
+  });
+
+  test('a citation to a different document still cannot survive verification', async () => {
+    const lease = await seedInvoice([{ key: 'notice_period', label: 'Notice Period', value: '60 days' }]);
+    const other = await seedInvoice([{ key: 'total_due', label: 'Total Due', value: 500 }]);
+
+    // The model cites a document it was never shown. Verification resolves
+    // real documents, so this has to be caught by the refusal rule.
+    askModel.mockResolvedValue({
+      refused: false, refusal_reason: null, answer: 'The total is 500.',
+      citations: [{ document_id: String(other._id), field_key: 'total_due' }],
+    });
+
+    const res = await request(app).post('/ask').send({ question: 'anything?', documentId: String(lease._id) });
+    expect(res.body.citations.every((c) => c.documentId === String(lease._id))).toBe(true);
+  });
+
+  test('an unknown or unreadable document refuses instead of falling back to the whole corpus', async () => {
+    await seedInvoice([{ key: 'total_due', label: 'Total Due', value: 500 }]);
+    const missing = new mongoose.Types.ObjectId().toString();
+
+    const res = await request(app).post('/ask').send({ question: 'What is the total due?', documentId: missing });
+    expect(res.body.refused).toBe(true);
+    expect(askModel).not.toHaveBeenCalled();
+  });
+
+  test('a malformed document id refuses rather than throwing', async () => {
+    await seedInvoice([{ key: 'total_due', label: 'Total Due', value: 500 }]);
+    const res = await request(app).post('/ask').send({ question: 'anything?', documentId: 'not-an-id' });
+    expect(res.status).toBe(200);
+    expect(res.body.refused).toBe(true);
+    expect(askModel).not.toHaveBeenCalled();
+  });
+});
+
 describe('GET /ask/suggestions', () => {
   test('regenerates and caches when there is no cache or the fingerprint changed', async () => {
     await seedInvoice([{ key: 'total_due', label: 'Total Due', value: 500 }]);

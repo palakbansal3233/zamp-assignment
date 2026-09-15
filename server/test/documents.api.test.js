@@ -635,6 +635,7 @@ describe('GET /query', () => {
 // behaviour rather than the implementation, so they'd still catch a leak if
 // the enforcement were ever moved or rewritten.
 describe('session isolation', () => {
+  const { config } = require('../src/config');
   async function uploadAs(sessionId, filename) {
     extractStructuredData.mockResolvedValue({
       unreadable: false, unreadableReason: null, docType: 'receipt',
@@ -697,7 +698,7 @@ describe('session isolation', () => {
     expect(res.headers['x-sift-session']).toMatch(/^[a-f0-9]{32,}$/);
   });
 
-  test('ending a session deletes that visitor’s documents and nobody else’s', async () => {
+  test('leaving schedules this visitor’s documents to expire, and nobody else’s', async () => {
     await uploadAs(TEST_SESSION, 'mine.txt');
     await uploadAs(OTHER_SESSION, 'theirs.txt');
 
@@ -705,13 +706,43 @@ describe('session isolation', () => {
     const res = await request(app, TEST_SESSION).post('/session/end');
     expect(res.status).toBe(204);
 
-    expect((await request(app, TEST_SESSION).get('/documents')).body.items).toEqual([]);
-    expect((await request(app, OTHER_SESSION).get('/documents')).body.items.map((d) => d.filename)).toEqual(['theirs.txt']);
+    const Document = require('../src/models/Document');
+    const [mine] = await withSession(() => Document.find({}).lean(), TEST_SESSION);
+    const [theirs] = await withSession(() => Document.find({}).lean(), OTHER_SESSION);
+
+    // Due imminently...
+    expect(mine.expiresAt.getTime() - Date.now()).toBeLessThan(config.sessionGraceMs + 1000);
+    // ...and the other visitor is untouched, still on the full TTL.
+    expect(theirs.expiresAt.getTime() - Date.now()).toBeGreaterThan(config.sessionGraceMs * 2);
+  });
+
+  // pagehide fires on reload as well as on close, so an immediate delete
+  // meant pressing F5 destroyed everything you had uploaded. Coming back has
+  // to undo the goodbye.
+  test('a reload after leaving keeps the documents, by cancelling the pending expiry', async () => {
+    await uploadAs(TEST_SESSION, 'mine.txt');
+    await request(app, TEST_SESSION).post('/session/end');
+
+    // What a reload does first: load the list.
+    const afterReload = await request(app, TEST_SESSION).get('/documents');
+    expect(afterReload.body.items.map((d) => d.filename)).toEqual(['mine.txt']);
+
+    const Document = require('../src/models/Document');
+    const [mine] = await withSession(() => Document.find({}).lean(), TEST_SESSION);
+    expect(mine.expiresAt.getTime() - Date.now()).toBeGreaterThan(config.sessionGraceMs * 2);
   });
 
   test('ending a session twice is not an error — teardown gets no second chance to handle one', async () => {
     await uploadAs(TEST_SESSION, 'mine.txt');
     expect((await request(app, TEST_SESSION).post('/session/end')).status).toBe(204);
     expect((await request(app, TEST_SESSION).post('/session/end')).status).toBe(204);
+  });
+
+  test('clearing documents explicitly still deletes them there and then', async () => {
+    const created = (await uploadAs(TEST_SESSION, 'mine.txt')).body;
+    // "Clear all" is a deliberate act, not a guess about whether someone
+    // left, so it deletes immediately rather than scheduling anything.
+    expect((await request(app, TEST_SESSION).delete(`/documents/${created._id}`)).status).toBe(204);
+    expect((await request(app, TEST_SESSION).get('/documents')).body.items).toEqual([]);
   });
 });

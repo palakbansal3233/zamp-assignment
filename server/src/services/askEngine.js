@@ -105,7 +105,7 @@ async function askModel(question, digest) {
 // silently dropped, the same way a non-matching `quote` just doesn't
 // highlight in Review: a bad citation should degrade quietly, not surface
 // as an error or (worse) get treated as grounding for an answer.
-async function verifyCitations(rawCitations) {
+async function verifyCitations(rawCitations, { onlyDocumentId = null } = {}) {
   if (!Array.isArray(rawCitations)) return [];
 
   const candidates = [];
@@ -115,6 +115,12 @@ async function verifyCitations(rawCitations) {
     const documentId = typeof raw.document_id === 'string' ? raw.document_id : null;
     const fieldKey = typeof raw.field_key === 'string' ? raw.field_key : null;
     if (!documentId || !fieldKey || !mongoose.Types.ObjectId.isValid(documentId)) continue;
+    // When the question was scoped to one document, a citation to any other
+    // one is dropped here rather than only kept out of the prompt. Leaving
+    // the prompt as the sole defence would mean trusting the model to have
+    // only used what it was given — and the whole citation-verification
+    // design exists precisely because that isn't something to trust.
+    if (onlyDocumentId && documentId !== onlyDocumentId) continue;
     const dedupeKey = `${documentId}:${fieldKey}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
