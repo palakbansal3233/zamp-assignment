@@ -21,7 +21,7 @@ I took the second, and everything downstream follows from it: a `fields` array o
 
 | Left out | Why |
 |---|---|
-| Auth / multi-user | Orthogonal, well-understood, would have eaten the time this project's actual problem deserved. One user, one corpus. |
+| Accounts / login | Orthogonal, well-understood, and it would have eaten the time this project's actual problem deserved. Isolation is solved without it — see §3, *Your documents leave when you do* — so nobody shares a workspace even though nobody signs in. |
 | Vector DB / embeddings / RAG retrieval | The corpus is *already structured* — extraction did that work. Grounding answers in extracted fields is more precise than re-embedding text I've already parsed, at this scale. Revisit if "find documents about a similar topic" ever becomes a requirement. |
 | Background job queue | See §2 — the person this is for uploads one document that matters and watches it land. Durable queue infra buys them nothing. |
 | Cross-document entity resolution | Conflict detection works when two documents use the *same* field key. Recognising that `price_escalator_note` and `price_cap_percentage` describe the same fact is a genuinely different (and much larger) problem. Named, not hidden — see §9. |
@@ -68,6 +68,14 @@ Every feature below traces back to one of those four. Anything that didn't, I di
 
 **Ask cites, or it refuses.** Answers name the exact documents and fields they're grounded in. If nothing supports an answer, it says so rather than producing something plausible. For someone asking "what's my notice period" before serving notice, a wrong answer is worse than no answer.
 
+**Your documents leave when you do.** This is one public link, and the original build had one shared corpus behind it — so sending someone the link handed them your tenancy agreement. For a product whose entire premise is *documents that matter, which you can't fully read*, that was the worst possible default, and it's the same instinct as need #4: this stuff shouldn't travel further than you meant it to.
+
+So each visitor gets their own workspace, with no account to create. `sessionStorage` carries the id: per-tab, so two people never collide; it survives a reload, so refreshing mid-upload doesn't cost you your work; and the browser drops it when the tab closes, which means "gone when you leave" is enforced by the browser rather than only by our good intentions. A `pagehide` beacon deletes the data server-side, and a 2-hour TTL covers what a beacon can't — a crashed browser, a killed mobile tab, no signal at the moment of leaving. "It deleted your documents, probably" isn't a privacy promise worth making.
+
+The part I'd point at: the enforcement is **not** in the controllers. There are ~20 query sites, and one forgotten `.find()` is a silent leak that no obvious test catches. A rule that has to hold everywhere belongs somewhere it can't be bypassed by forgetting — so the session travels in `AsyncLocalStorage` and is injected by Mongoose query middleware. Code written later inherits it for free. The tests are written against observable behaviour (knowing a document's id is not enough to open it from another session) rather than the mechanism, so they'd still catch a leak if that machinery were ever replaced.
+
+**Motion that's tied to something real.** Documents stagger onto the queue because they genuinely arrived one at a time; clicking a value flares its source text before settling, because leading the eye to the provenance *is* the product. The only two things that loop forever are the two that are genuinely still happening — reading, and thinking about a question. All of it switches off under `prefers-reduced-motion`: vestibular disorders are real, and "delightful" that makes someone queasy is just broken.
+
 **Sensitive fields warn before they travel.** Extraction flags what shouldn't be casually shared; Review shows a standing notice, and Ask cautions when an answer draws on one. Directly serving need #4 — the prescription-to-a-friend case.
 
 **Progress that means something.** A long document reports "page group 3 of 4", not a decorative animation — because it's genuinely reading in parts and each one is genuinely saved.
@@ -91,7 +99,7 @@ Every feature below traces back to one of those four. Anything that didn't, I di
 
 ## 5. Tests
 
-**98 tests, and they're pointed at the things that would actually hurt.**
+**107 tests, and they're pointed at the things that would actually hurt.**
 
 - The query sanitizer, against injection attempts (`$where`, operator objects smuggled as values, prototype-ish paths).
 - Citation verification: a hallucinated document id, a field key that doesn't exist, a malformed citation — each dropped; and the rule that **zero surviving citations forces a refusal** rather than an ungrounded answer.
@@ -130,7 +138,7 @@ One install, one command, both servers. `server/.env.example` documents every va
 
 ## 8. Velocity
 
-Working, deployed, and verified end-to-end: ingestion for PDF / DOCX / images / text, schema-agnostic extraction with provenance, confidence and sensitivity flagging, a review flow with human confirmation, keyword + LLM-filtered search, a cited-or-refusing Ask endpoint with cross-document conflict detection, chunked resumable reading of long documents, 98 tests, a golden eval harness, and a three-screen UI built from a design system — running on one Netlify deploy with MongoDB Atlas.
+Working, deployed, and verified end-to-end: ingestion for PDF / DOCX / images / text, schema-agnostic extraction with provenance, confidence and sensitivity flagging, a review flow with human confirmation, keyword + LLM-filtered search, a cited-or-refusing Ask endpoint with cross-document conflict detection, chunked resumable reading of long documents, 107 tests, a golden eval harness, and a three-screen UI built from a design system — running on one Netlify deploy with MongoDB Atlas.
 
 Two production bugs found and fixed against the live deployment, not just locally: an Atlas IP-allowlist issue, and a `basePath` mismatch where Netlify's rewrite passes the function the original client path rather than the internal one — which every prior test had "verified" against my own wrong assumption instead of the platform's real behaviour.
 
