@@ -45,7 +45,7 @@ Your documents are private to your browser tab and are cleaned up when you leave
 ## Tests
 
 ```bash
-npm test                          # 112 tests
+npm test                          # 113 tests
 npm run eval --workspace server   # golden eval (makes real API calls)
 ```
 

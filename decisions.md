@@ -105,7 +105,7 @@ The part I'd point at: the enforcement is **not** in the controllers. There are 
 
 ## 5. Tests
 
-**112 tests, and they're pointed at the things that would actually hurt.**
+**113 tests, and they're pointed at the things that would actually hurt.**
 
 - The query sanitizer, against injection attempts (`$where`, operator objects smuggled as values, prototype-ish paths).
 - Citation verification: a hallucinated document id, a field key that doesn't exist, a malformed citation — each dropped; and the rule that **zero surviving citations forces a refusal** rather than an ungrounded answer.
@@ -144,7 +144,7 @@ One install, one command, both servers. `server/.env.example` documents every va
 
 ## 8. Velocity
 
-Working, deployed, and verified end-to-end: ingestion for PDF / DOCX / images / text, schema-agnostic extraction with provenance, confidence and sensitivity flagging, a review flow with human confirmation, keyword + LLM-filtered search, a cited-or-refusing Ask endpoint with cross-document conflict detection, chunked resumable reading of long documents, 112 tests, a golden eval harness, and a three-screen UI built from a design system — running on one Netlify deploy with MongoDB Atlas.
+Working, deployed, and verified end-to-end: ingestion for PDF / DOCX / images / text, schema-agnostic extraction with provenance, confidence and sensitivity flagging, a review flow with human confirmation, keyword + LLM-filtered search, a cited-or-refusing Ask endpoint with cross-document conflict detection, chunked resumable reading of long documents, 113 tests, a golden eval harness, and a three-screen UI built from a design system — running on one Netlify deploy with MongoDB Atlas.
 
 Two production bugs found and fixed against the live deployment, not just locally: an Atlas IP-allowlist issue, and a `basePath` mismatch where Netlify's rewrite passes the function the original client path rather than the internal one — which every prior test had "verified" against my own wrong assumption instead of the platform's real behaviour.
 

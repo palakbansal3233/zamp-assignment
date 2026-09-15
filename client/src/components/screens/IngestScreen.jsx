@@ -167,7 +167,22 @@ export default function IngestScreen({ ingest }) {
           <>
             <div className="queue-heading-row">
               <h6>Your documents</h6>
-              {ingest.readyLabel && <span className="ready-label text-muted">{ingest.readyLabel}</span>}
+              <div className="queue-heading-right">
+                {ingest.readyLabel && <span className="ready-label text-muted">{ingest.readyLabel}</span>}
+                {/* Only worth showing once there's enough to reorder — a sort
+                    control above two documents is a control for its own sake. */}
+                {ingest.sortOptions && ingest.items.length > 1 && (
+                  <label className="sort-control" title="Change the order your documents are listed in">
+                    <span className="sort-control-label">Sort</span>
+                    <select value={ingest.sortBy} onChange={(e) => ingest.onSort(e.target.value)}>
+                      {ingest.sortOptions.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                    <i className="ph ph-caret-down" />
+                  </label>
+                )}
+              </div>
             </div>
             <DocumentList items={ingest.items} onOpen={ingest.openDoc} />
           </>

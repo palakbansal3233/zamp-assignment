@@ -250,7 +250,10 @@ async function listDocuments(req, res) {
   const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
 
   const [items, total] = await Promise.all([
-    Document.find({}, LIST_PROJECTION).sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+    // Most recently updated first — a document you just confirmed a field on
+    // is the one you're working with, which `createdAt` would bury under
+    // whatever you happened to upload last.
+    Document.find({}, LIST_PROJECTION).sort({ updatedAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
     Document.countDocuments({}),
   ]);
 
@@ -335,7 +338,12 @@ async function endSession(req, res) {
   // visitor's documents, never anyone else's.
   const expiresAt = new Date(Date.now() + config.sessionGraceMs);
   await Promise.all([
-    Document.updateMany({}, { $set: { expiresAt } }),
+    // `timestamps: false` because this is housekeeping, not an edit. Mongoose
+    // bumps `updatedAt` on updateMany by default, which would stamp every
+    // document with the same instant and destroy the "recently updated"
+    // ordering the list is sorted by — measured: one touch collapsed three
+    // documents to a single updatedAt and inverted their order.
+    Document.updateMany({}, { $set: { expiresAt } }, { timestamps: false }),
     SuggestionCache.updateOne({ _id: getSessionId() }, { $set: { expiresAt } }),
   ]);
   res.status(204).end();
@@ -348,7 +356,9 @@ async function endSession(req, res) {
  */
 async function touchSession() {
   const expiresAt = new Date(Date.now() + config.sessionTtlMs);
-  await Document.updateMany({}, { $set: { expiresAt } });
+  // Same reason as endSession: staying alive is not an edit. This one runs on
+  // every single page load, so without it the sort would reset constantly.
+  await Document.updateMany({}, { $set: { expiresAt } }, { timestamps: false });
 }
 
 /**

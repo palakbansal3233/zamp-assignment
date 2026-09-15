@@ -120,6 +120,12 @@ export function useSift() {
   const [hover, setHover] = useState(null);
   const [confirmingKey, setConfirmingKey] = useState(null);
   const [deletingAll, setDeletingAll] = useState(false);
+  // How the document list is ordered. Default is most-recently-updated,
+  // because the document you last touched is overwhelmingly the one you came
+  // back for. Category grouping is one of the options rather than a separate
+  // toggle — it's another way of ordering the same list, not a second axis,
+  // and one control is easier to reason about than two.
+  const [sortBy, setSortBy] = useState('recent');
 
   const [askDraft, setAskDraft] = useState('');
   const [askBusy, setAskBusy] = useState(false);
@@ -532,7 +538,26 @@ export function useSift() {
   // ---- derived view models (real mode) ----
   const demoMode = DEMO_SCENARIO_IDS.has(scen);
 
-  const queueItems = documents.map((d) => {
+  const needsAttention = (d) =>
+    d.status === 'error' || (d.extraction?.unreadableParts || []).length > 0 || (d.fields || []).some((f) => f.needsReview);
+
+  // The server already returns most-recently-updated first, so `recent` is
+  // the identity here. Sorting the rest client-side is deliberate: this is
+  // one person's documents, capped at 50, so reordering is instant and
+  // costs no round trip — and it keeps the API surface from growing a sort
+  // parameter that would need its own validation and its own tests.
+  const sortedDocuments = (() => {
+    const docs = [...documents];
+    const byRecent = (a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
+    switch (sortBy) {
+      case 'oldest': return docs.sort((a, b) => new Date(a.updatedAt || 0) - new Date(b.updatedAt || 0));
+      case 'name': return docs.sort((a, b) => String(a.filename).localeCompare(String(b.filename), undefined, { numeric: true, sensitivity: 'base' }));
+      case 'attention': return docs.sort((a, b) => (needsAttention(b) ? 1 : 0) - (needsAttention(a) ? 1 : 0) || byRecent(a, b));
+      default: return docs.sort(byRecent);
+    }
+  })();
+
+  const queueItems = sortedDocuments.map((d) => {
     // A long document that's mid-read: report where it actually is, not a
     // decorative animation. `unit` tells us whether that's pages or parts.
     if (d.status === 'processing' && d.extraction?.totalChunks > 1) {
@@ -577,7 +602,7 @@ export function useSift() {
     }
     return {
       id: d._id, name: d.filename, kind: prettyDocType(d.docType), icon: iconForDocType(d.docType), clickable: true,
-      category: categoryFor(d.docType),
+      category: sortBy === 'category' ? categoryFor(d.docType) : null,
       sub: d.unreadable ? d.unreadableReason || 'Could not be read clearly.' : d.summary || '',
       status: 'done',
       fieldCount: `${(d.fields || []).length} details found`,
@@ -627,6 +652,15 @@ export function useSift() {
     deleteAll: handleDeleteAllDocuments,
     deletingAll,
     canDeleteAll: documents.length > 0,
+    sortBy,
+    onSort: setSortBy,
+    sortOptions: [
+      { value: 'recent', label: 'Recently updated' },
+      { value: 'attention', label: 'Needs attention first' },
+      { value: 'name', label: 'Name (A–Z)' },
+      { value: 'oldest', label: 'Oldest first' },
+      { value: 'category', label: 'Grouped by type' },
+    ],
   };
 
   const doc = openDocData;

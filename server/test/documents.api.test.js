@@ -461,7 +461,7 @@ describe('POST /documents (a chunk too slow to read is retried smaller)', () => 
 });
 
 describe('GET/DELETE /documents', () => {
-  async function seedOne(overrides = {}) {
+  async function seedOne({ filename = 'invoice.txt', ...overrides } = {}) {
     extractStructuredData.mockResolvedValue({
       unreadable: false,
       unreadableReason: null,
@@ -473,7 +473,7 @@ describe('GET/DELETE /documents', () => {
     });
     const res = await request(app)
       .post('/documents')
-      .send({ filename: 'invoice.txt', mimeType: 'text/plain', dataBase64: Buffer.from('Invoice #123, total $500').toString('base64') });
+      .send({ filename, mimeType: 'text/plain', dataBase64: Buffer.from('Invoice #123, total $500').toString('base64') });
     return res.body;
   }
 
@@ -486,6 +486,29 @@ describe('GET/DELETE /documents', () => {
     expect(res.body.items).toHaveLength(1);
     expect(res.body.total).toBe(2);
     expect(res.body.totalPages).toBe(2);
+  });
+
+  test('lists most recently updated first, and keeping a session alive does not disturb that', async () => {
+    const older = await seedOne({ filename: 'older.txt' });
+    await new Promise((r) => setTimeout(r, 30));
+    const newer = await seedOne({ filename: 'newer.txt' });
+
+    const first = await request(app).get('/documents');
+    expect(first.body.items.map((d) => d.filename)).toEqual(['newer.txt', 'older.txt']);
+
+    // Loading the list touches the session to cancel any pending expiry.
+    // That's housekeeping, not an edit — if it bumped `updatedAt` it would
+    // stamp every document with the same instant and scramble this order,
+    // which is exactly what happened before `timestamps: false`.
+    const second = await request(app).get('/documents');
+    expect(second.body.items.map((d) => d.filename)).toEqual(['newer.txt', 'older.txt']);
+
+    // ...and a real edit *does* move a document to the top, because that one
+    // genuinely is the document you were last working on.
+    await request(app).patch(`/documents/${older._id}/fields/invoice_number`).send({ confirmed: true });
+    const third = await request(app).get('/documents');
+    expect(third.body.items.map((d) => d.filename)).toEqual(['older.txt', 'newer.txt']);
+    expect(String(newer._id)).not.toBe(String(older._id));
   });
 
   test('gets a single document by id', async () => {
