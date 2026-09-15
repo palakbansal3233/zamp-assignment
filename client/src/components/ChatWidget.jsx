@@ -1,8 +1,14 @@
 export default function ChatWidget({ chat }) {
   if (!chat.open) {
     return (
-      <button type="button" className="chat-launcher" title="Open the Ask Sift chat" onClick={chat.toggle}>
-        <i className="ph ph-chat-teardrop-dots" />Ask Sift
+      <button
+        type="button"
+        className="chat-launcher"
+        title={chat.scope ? `Continue asking about ${chat.scope.filename}` : 'Open the Ask Sift chat'}
+        onClick={chat.toggle}
+      >
+        <i className="ph ph-chat-teardrop-dots" />
+        {chat.scope ? 'Ask this document' : 'Ask Sift'}
         {chat.badge && <span className="chat-launcher-badge" />}
       </button>
     );
@@ -17,13 +23,32 @@ export default function ChatWidget({ chat }) {
           title={chat.broken ? 'Not currently available' : 'Ready'}
         />
         <div className="chat-header-text">
-          <div className="chat-title">Ask Sift</div>
+          <div className="chat-title">{chat.scope ? 'Asking one document' : 'Ask Sift'}</div>
           <div className="chat-status">{chat.status}</div>
         </div>
         <button type="button" className="chat-minimize" title="Minimize this chat" onClick={chat.toggle}>
           <i className="ph ph-minus" />
         </button>
       </div>
+
+      {/* The scope is a promise about what this chat can reach, so it stays
+          visible the whole time rather than only in the opening message. */}
+      {chat.scope && (
+        <div className="chat-scope">
+          <i className="ph ph-file-text" />
+          <span className="chat-scope-name" title={chat.scope.filename}>{chat.scope.filename}</span>
+          {chat.clearScope && (
+            <button
+              type="button"
+              className="chat-scope-clear"
+              title="Ask across all of your documents instead"
+              onClick={chat.clearScope}
+            >
+              Ask all
+            </button>
+          )}
+        </div>
+      )}
 
       {chat.busy && (
         <div className="chat-progress-track">

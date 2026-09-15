@@ -120,6 +120,10 @@ export function useSift() {
   const [askResult, setAskResult] = useState(null);
   const [suggestions, setSuggestions] = useState([]);
 
+  // When set, the chat is asking ONE document rather than everything. This
+  // is what "Ask this document" opens into, and it's a real constraint on
+  // the server side, not just a label.
+  const [chatScope, setChatScope] = useState(null); // {documentId, filename}
   const [chatOpen, setChatOpen] = useState(false);
   const [chatBadge, setChatBadge] = useState(true);
   const [chatDraft, setChatDraft] = useState('');
@@ -438,7 +442,7 @@ export function useSift() {
     setChatDraft('');
     setChatBusy(true);
     try {
-      const res = await api.askQuestion(text);
+      const res = await api.askQuestion(text, chatScope?.documentId || null);
       if (res.refused) {
         setChatMsgs((prev) => [...prev, { role: 'err', title: 'No answer found', text: res.reason || 'Nothing in your documents supports an answer.' }]);
       } else {
@@ -455,6 +459,25 @@ export function useSift() {
     } finally {
       setChatBusy(false);
     }
+  }, [chatScope]);
+
+  /** Opens the chat pinned to one document — the "Ask this document" path. */
+  const askThisDocument = useCallback((doc) => {
+    setChatScope({ documentId: doc._id, filename: doc.filename });
+    setChatMsgs([
+      {
+        role: 'bot',
+        text: `Ask me anything about "${doc.filename}". I'll answer only from this document — nothing else you've uploaded.`,
+      },
+    ]);
+    setChatOpen(true);
+    setChatBadge(false);
+  }, []);
+
+  /** Drops back to asking everything. */
+  const clearChatScope = useCallback(() => {
+    setChatScope(null);
+    setChatMsgs([{ role: 'bot', text: 'Asking across all your documents now. I answer only from details I can point at.' }]);
   }, []);
 
   // ---- scenarios (States panel) ----
@@ -661,7 +684,10 @@ export function useSift() {
       : null,
     active,
     clearActive: () => { setActive(null); setHover(null); },
-    goAsk: () => setScreen('ask'),
+    // "Ask this document" opens the chat pinned to it, rather than jumping
+    // to the corpus-wide Ask screen — the question you have while looking at
+    // a lease is about that lease.
+    goAsk: () => doc && askThisDocument(doc),
     goIngest: () => setScreen('ingest'),
   };
 
@@ -712,17 +738,24 @@ export function useSift() {
     open: chatOpen, badge: chatBadge,
     toggle: () => { setChatOpen((o) => !o); setChatBadge(false); },
     broken: false,
-    status: `${documents.filter((d) => d.status === 'done').length} documents · every answer shows where it came from`,
+    scope: chatScope,
+    clearScope: clearChatScope,
+    status: chatScope
+      ? 'Only this document · every answer shows where it came from'
+      : `${documents.filter((d) => d.status === 'done').length} documents · every answer shows where it came from`,
     busy: chatBusy,
     msgs: chatMsgs.map((m, i) => ({
       key: i, role: m.role, title: m.title || '', text: m.text,
       cites: (m.cites || []).map(([dId, fKey, label]) => ({ label, go: () => openDoc(dId, fKey) })),
       actions: [],
     })),
-    chips: suggestions.slice(0, 2).map((q) => ({ label: q.text, run: () => chatSayReal(q.text) })),
+    // Corpus-wide suggestions make no sense while pinned to one document —
+    // they'd invite questions this chat has deliberately been stopped from
+    // being able to answer.
+    chips: chatScope ? [] : suggestions.slice(0, 2).map((q) => ({ label: q.text, run: () => chatSayReal(q.text) })),
     draft: chatDraft,
     onDraft: setChatDraft,
-    placeholder: 'Ask about any document…',
+    placeholder: chatScope ? `Ask about ${chatScope.filename}…` : 'Ask about any document…',
     send: () => { if (chatDraft.trim()) chatSayReal(chatDraft.trim()); },
   };
 

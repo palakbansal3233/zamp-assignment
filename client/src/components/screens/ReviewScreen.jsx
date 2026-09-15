@@ -106,6 +106,9 @@ export default function ReviewScreen({ review }) {
     );
   }
 
+  const needsCheck = review.fieldRows.filter((f) => f.needs);
+  const settled = review.fieldRows.filter((f) => !f.needs);
+
   return (
     <>
       <div className="review-tabsbar">
@@ -180,10 +183,37 @@ export default function ReviewScreen({ review }) {
             </div>
           )}
 
-          <div className="field-list">
-            {review.fieldRows.map((f) => <FieldRow key={f.id} f={f} />)}
-          </div>
+          {/* Anything the machine wasn't sure about comes first. This screen
+              exists so someone can check the work before signing, paying or
+              taking a medicine — burying the two uncertain values below
+              twenty confident ones gets that backwards. */}
+          {needsCheck.length > 0 && (
+            <section className="field-section is-attention">
+              <div className="field-section-head">
+                <i className="ph ph-warning-circle" />
+                <span>{needsCheck.length === 1 ? 'One value worth checking' : `${needsCheck.length} values worth checking`}</span>
+              </div>
+              <div className="field-list">
+                {needsCheck.map((f) => <FieldRow key={f.id} f={f} />)}
+              </div>
+            </section>
+          )}
 
+          {settled.length > 0 && (
+            <section className="field-section">
+              {needsCheck.length > 0 && (
+                <div className="field-section-head">
+                  <i className="ph ph-check-circle" />
+                  <span>Read clearly</span>
+                </div>
+              )}
+              <div className="field-list">
+                {settled.map((f) => <FieldRow key={f.id} f={f} />)}
+              </div>
+            </section>
+          )}
+
+          {review.newFields.length > 0 && (
           <div className="new-fields-card">
             <div className="new-fields-title">This document was the first to mention</div>
             <div className="new-fields-tags">
@@ -192,6 +222,7 @@ export default function ReviewScreen({ review }) {
               ))}
             </div>
           </div>
+          )}
         </div>
       </div>
     </>

@@ -116,8 +116,13 @@ export function getHealth() {
   return request('/health');
 }
 
-export function askQuestion(question) {
-  return request('/ask', { method: 'POST', body: JSON.stringify({ question }) });
+export function askQuestion(question, documentId = null) {
+  return request('/ask', {
+    method: 'POST',
+    // `documentId` scopes the answer to one document — the server builds the
+    // digest from that document alone, so nothing else can be drawn on.
+    body: JSON.stringify(documentId ? { question, documentId } : { question }),
+  });
 }
 
 export function getSuggestions() {
