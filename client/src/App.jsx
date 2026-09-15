@@ -11,7 +11,7 @@ import SessionDialog from './components/SessionDialog';
 import Toasts from './components/Toasts';
 
 // Phase B: the app runs on useSift, the real-data engine — see
-// decisions.md §24. It composes real API state with the original demo
+// decisions.md. It composes real API state with the original demo
 // engine (useSiftDemo) for the States-panel scenarios that still need
 // infrastructure this project doesn't build (auth, billing, an offline
 // queue); the component tree below is unchanged from Phase A, since both

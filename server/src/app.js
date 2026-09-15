@@ -20,8 +20,8 @@ const { sessionMiddleware } = require('./middleware/sessionContext');
  *    whose basePath strips Netlify's own /.netlify/functions/api prefix.
  *
  * Same route definitions, same middleware, same behavior in both places —
- * only the outer wiring differs. See decisions.md ("One Express app, two
- * runtimes").
+ * only the outer wiring differs, so there's no drift between what the tests
+ * exercise and what actually deploys.
  */
 function createApp() {
   const app = express();

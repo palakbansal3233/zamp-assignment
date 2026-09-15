@@ -82,12 +82,11 @@ const DocumentSchema = new Schema(
     summary: { type: String, default: '' },
 
     // The dynamic, arbitrarily-shaped structured data extracted from the
-    // document — see decisions.md ("Dynamic schema over per-type
-    // collections", and the later note on why this is an array of
-    // descriptors rather than a flat Mixed object). One entry per top-level
-    // extracted concept; a naturally nested value (e.g. an invoice's line
-    // items) stays as one field whose `value` is itself an array/object,
-    // not flattened into one descriptor per leaf.
+    // document — see decisions.md ("The model decides the schema, not me"),
+    // stored as an array of self-describing descriptors rather than a flat
+    // Mixed object. One entry per top-level extracted concept; a naturally
+    // nested value (e.g. an invoice's line items) stays as one field whose
+    // `value` is itself an array/object, not flattened into one per leaf.
     fields: { type: [FieldSchema], default: [] },
 
     // Derived, read-only `{key: value}` shadow of `fields`, rebuilt every

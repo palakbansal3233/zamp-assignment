@@ -6,7 +6,7 @@ const { HttpError } = require('../middleware/errorHandler');
 // this is built for — and it's exactly the one that blows a single
 // request/response extraction budget. So a document isn't one model call
 // any more: it's a sequence of bounded chunks, each persisted as it
-// completes. See decisions.md ("Long documents").
+// completes. See decisions.md ("A long document is a sequence of chunks").
 // Two pages per chunk, not three: a text-dense contract page takes real
 // time to read, and the whole scheme only works if a single chunk
 // comfortably fits inside one request. Smaller chunks mean more requests,
