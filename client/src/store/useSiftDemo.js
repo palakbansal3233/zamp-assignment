@@ -18,6 +18,20 @@ const initialState = {
   chatMsgs: [GREETING]
 };
 
+// The demo fixtures carry machine-shaped labels and values (`effective_date`,
+// the string "true") because they were authored to mirror raw extraction
+// output. Presented as-is they read like a database dump, so they get the
+// same plain-language treatment the real engine gives real data — the demo
+// panel is still a showcase, and it should look like the product.
+function humanizeKey(key) {
+  return String(key).replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+function humanizeValue(value) {
+  if (value === true || value === 'true') return 'Yes';
+  if (value === false || value === 'false') return 'No';
+  return value;
+}
+
 function confidenceColor(conf) {
   if (conf >= 0.9) return 'var(--color-accent)';
   if (conf >= 0.8) return 'var(--color-accent-600)';
@@ -180,7 +194,7 @@ export function useSiftDemo() {
     const needs = !!f.check && !s.confirmed[f.id];
     const c = s.confirmed[f.id] ? 0.99 : f.conf;
     return {
-      id: f.id, label: f.label, value: f.value, conflict: !!f.conflict, lit, needs,
+      id: f.id, label: humanizeKey(f.label), value: humanizeValue(f.value), conflict: !!f.conflict, lit, needs,
       checkNote: f.check || '',
       checkActions: (f.actions || ['Confirm']).map((l) => ({
         label: l, run: () => setS((prev) => ({ ...prev, confirmed: { ...prev.confirmed, [f.id]: true } }))
@@ -263,7 +277,7 @@ export function useSiftDemo() {
       docTabs: (blank ? DOCS.concat([LAB_DOC]) : DOCS).map((d) => ({ id: d.id, label: d.label, active: s.docId === d.id, go: () => patch({ docId: d.id, active: null }) })),
       meta: blank ? 'TIFF · 2 pages · 118 dpi · OCR returned 4 characters' : denied ? 'Source restricted · fields cached 4 Sept' : doc.meta,
       schemaNote: blank ? 'Nothing to infer from yet' : partial ? '4 of 19 fields captured before the run halted' : doc.schemaNote,
-      newFields: (blank ? [] : doc.newFields),
+      newFields: (blank ? [] : doc.newFields || []).map(humanizeKey),
       readable: !blank && !denied,
       unreadableTitle: denied ? 'You cannot open this document' : 'No text could be recovered',
       unreadableText: denied
@@ -273,6 +287,7 @@ export function useSiftDemo() {
       truncated: partial,
       truncatedNote: 'Pages 9–14 were not parsed. The document text ends here because the run halted, not because the file does.',
       notice,
+      active: s.active,
       clearActive: () => patch({ active: null, hover: null }),
       goAsk: () => go('ask')
     },

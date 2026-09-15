@@ -87,8 +87,8 @@ export default function ReviewScreen({ review }) {
       <EmptyReviewState
         icon="ph ph-file-dashed"
         title="This document isn't here anymore"
-        text="It may have been deleted — from this tab, another tab, or via Clear all. Head back to Ingest to see what's still there."
-        actionLabel="Back to Ingest"
+        text="It may have been deleted — in this tab, another tab, or with Clear all. Go back to your documents to see what's still there."
+        actionLabel="Back to my documents"
         onAction={review.goIngest}
       />
     );
@@ -99,8 +99,8 @@ export default function ReviewScreen({ review }) {
       <EmptyReviewState
         icon="ph ph-file-text"
         title="No document selected"
-        text="Pick a document from Ingest to see what was extracted from it."
-        actionLabel="Go to Ingest"
+        text="Pick one of your documents to see what we read from it."
+        actionLabel="Go to my documents"
         onAction={review.goIngest}
       />
     );
@@ -142,14 +142,22 @@ export default function ReviewScreen({ review }) {
         <div className="review-pane">
           <div className="review-fields-header">
             <div>
-              <h6>Inferred record</h6>
+              <h6>What we found</h6>
               <div className="review-schema-note">{review.schemaNote}</div>
             </div>
             <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
-              <button type="button" className="btn btn-ghost" title="Deselect the currently highlighted field" onClick={review.clearActive}>Clear</button>
+              {/* This used to read "Clear", one screen away from a "Clear all"
+                  that permanently deletes every document. Same word, wildly
+                  different stakes — so this one says what it actually does,
+                  and only appears when there is a selection to undo. */}
+              {review.active && (
+                <button type="button" className="btn btn-ghost" title="Stop highlighting this detail in the document" onClick={review.clearActive}>
+                  Unhighlight
+                </button>
+              )}
               {review.deleteDocument && (
                 <button type="button" className="btn btn-ghost" title="Permanently delete this document" onClick={review.deleteDocument}>
-                  <i className="ph ph-trash" />Delete
+                  <i className="ph ph-trash" />Delete this document
                 </button>
               )}
             </div>
@@ -177,7 +185,7 @@ export default function ReviewScreen({ review }) {
           </div>
 
           <div className="new-fields-card">
-            <div className="new-fields-title">Fields this document added to the dataset</div>
+            <div className="new-fields-title">This document was the first to mention</div>
             <div className="new-fields-tags">
               {review.newFields.map((label) => (
                 <span key={label} className="tag tag-outline" title={`"${label}" was not seen on any other document before this one`}>{label}</span>

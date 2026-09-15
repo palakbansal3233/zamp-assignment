@@ -69,15 +69,15 @@ export default function IngestScreen({ ingest }) {
     <>
       <div className="ingest-header">
         <div>
-          <h6>Ingest</h6>
-          <h3>Drop anything in. We work out the shape.</h3>
+          <h6>My documents</h6>
+          <h3>Add a document. We&rsquo;ll read it for you.</h3>
         </div>
         <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
           {ingest.deleteAll && ingest.canDeleteAll && (
             <button
               type="button"
               className="btn btn-ghost"
-              title="Permanently delete every document in this dataset"
+              title="Permanently delete every document here"
               disabled={ingest.deletingAll}
               onClick={ingest.deleteAll}
             >
@@ -122,7 +122,7 @@ export default function IngestScreen({ ingest }) {
           }}
         >
           <i className="ph ph-tray-arrow-down dropzone-icon" />
-          <div className="dropzone-title">Drop a PDF, Word doc, photo, scan, or text file</div>
+          <div className="dropzone-title">Drag a file here, or click to choose one</div>
           <div className="dropzone-note text-muted">{ingest.dropNote}</div>
         </div>
 
@@ -146,7 +146,7 @@ export default function IngestScreen({ ingest }) {
         )}
 
         <div className="queue-heading-row">
-          <h6>Queue</h6>
+          <h6>Your documents</h6>
           <span className="ready-label text-muted">{ingest.readyLabel}</span>
         </div>
 

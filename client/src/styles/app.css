@@ -22,8 +22,8 @@ a:hover { color: var(--color-accent-200); }
 
 /* ── rail (left nav) ── */
 .rail {
-  width: 64px; flex: 0 0 64px; display: flex; flex-direction: column; align-items: center;
-  gap: var(--space-4); padding: var(--space-6) 0; border-right: 1px solid var(--color-neutral-900);
+  width: 82px; flex: 0 0 82px; display: flex; flex-direction: column; align-items: center;
+  gap: var(--space-2); padding: var(--space-6) 0; border-right: 1px solid var(--color-neutral-900);
   background: linear-gradient(180deg, var(--color-surface), var(--color-bg));
 }
 .rail-logo {
@@ -32,14 +32,19 @@ a:hover { color: var(--color-accent-200); }
   color: var(--color-accent-300); margin-bottom: var(--space-4);
 }
 .rail-btn {
-  display: grid; place-items: center; width: 38px; height: 38px; border-radius: var(--radius-md);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  width: 66px; padding: 8px 2px; border-radius: var(--radius-md);
   cursor: pointer; border: 1px solid transparent; background: transparent; color: var(--color-neutral-500);
 }
 .rail-btn i { font-size: 19px; }
+.rail-btn-label {
+  font-size: 10.5px; line-height: 1.1; letter-spacing: 0.02em; text-align: center;
+}
 .rail-btn:hover { background: var(--color-accent-900); color: var(--color-accent-200); }
 .rail-btn.is-active { border-color: var(--color-accent-700); background: var(--color-accent-900); color: var(--color-accent-200); }
 .rail-spacer { flex: 1; }
-.rail-states-btn { display: grid; place-items: center; width: 38px; height: 38px; border-radius: var(--radius-md);
+.rail-states-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  width: 66px; padding: 8px 2px; border-radius: var(--radius-md);
   cursor: pointer; border: 1px solid transparent; background: transparent; color: var(--color-neutral-600); }
 .rail-states-btn i { font-size: 18px; }
 .rail-states-btn:hover { background: var(--color-accent-900); color: var(--color-accent-200); }

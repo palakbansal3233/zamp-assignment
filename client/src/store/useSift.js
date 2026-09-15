@@ -28,6 +28,15 @@ function iconForDocType(docType) {
   return DOC_TYPE_ICONS[docType] || 'ph ph-file-text';
 }
 
+// Document types are machine keys (`rental_agreement`, `book_page`). They were
+// reaching the screen raw, which reads like a database dump to anyone who
+// isn't a developer.
+function prettyDocType(docType) {
+  if (!docType) return 'document';
+  const words = String(docType).replace(/_/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
 function confidenceColor(conf) {
   if (conf == null) return 'var(--color-neutral-500)';
   if (conf >= 0.9) return 'var(--color-accent)';
@@ -45,6 +54,10 @@ function humanizeKey(key) {
 // that question. Render nested values as readable lines instead.
 function formatOneValue(value) {
   if (value === null || value === undefined || value === '') return '—';
+  // A raw `true` in a value column reads like a database dump. The person
+  // looking at this wants an answer to "is there highlighted text on this
+  // page?", and that answer is Yes.
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (typeof value !== 'object') return String(value);
   if (Array.isArray(value)) return value.map(formatOneValue).join(', ');
   return Object.entries(value)
@@ -55,6 +68,7 @@ function formatOneValue(value) {
 
 function formatFieldValue(value) {
   if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (Array.isArray(value)) {
     if (value.length === 0) return '—';
     // One entry per line — a list of three medicines should read as three
@@ -291,15 +305,27 @@ export function useSift() {
 
   const handleRetryDocument = useCallback(
     async (id) => {
+      setResumingIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
       try {
         const updated = await api.retryDocument(id);
         setDocuments((prev) => prev.map((d) => (d._id === updated._id ? updated : d)));
         if (docId === id) setOpenDocData((prev) => (prev ? { ...prev, ...updated } : updated));
+
+        // A retry only reads as much as one request's budget allows, so on a
+        // multi-page document it comes back still `processing`. Carry it
+        // through to the end rather than leaving the person to press a second
+        // button to finish what they already asked for.
+        if (updated.status === 'processing') {
+          const finished = await resumeUntilDone(id);
+          if (finished && docId === id) setOpenDocData(finished);
+        }
       } catch (err) {
-        pushToast(`Retry failed: ${err.message}`, 'error');
+        pushToast(`Couldn't finish reading that document: ${err.message}`, 'warning');
+      } finally {
+        setResumingIds((prev) => prev.filter((x) => x !== id));
       }
     },
-    [docId, pushToast]
+    [docId, pushToast, resumeUntilDone]
   );
 
   // ---- field confirm/resolve ----
@@ -470,23 +496,50 @@ export function useSift() {
       };
     }
     if (d.status === 'error') {
+      // Failing part-way through still leaves real, saved results behind, and
+      // locking those away behind an un-clickable row is the worst of both
+      // worlds — you're told it failed and you can't see what it did get.
+      const partial = (d.fields || []).length > 0;
       return {
-        id: d._id, name: d.filename, kind: 'Extraction failed', icon: 'ph ph-file-x', clickable: false,
+        id: d._id, name: d.filename, kind: 'Stopped early', icon: 'ph ph-file-x', clickable: partial,
         sub: d.errorMessage || 'Extraction failed for an unknown reason.', status: 'failed',
-        actions: [{ label: 'Retry', cls: 'btn-secondary', run: () => handleRetryDocument(d._id) }],
+        actions: [
+          ...(partial
+            ? [{ label: 'See what we got', cls: 'btn-secondary', run: () => openDoc(d._id) }]
+            : []),
+          // With partial results banked, "keep reading" must *resume* from
+          // where it stopped — retrying from scratch would throw away pages
+          // that were already read and paid for.
+          partial
+            ? { label: 'Keep reading', cls: 'btn-ghost', run: () => handleContinueReading(d._id) }
+            : { label: 'Try again', cls: 'btn-secondary', run: () => handleRetryDocument(d._id) },
+        ],
       };
     }
     return {
-      id: d._id, name: d.filename, kind: d.docType ? d.docType.replace(/_/g, ' ') : 'document', icon: iconForDocType(d.docType), clickable: true,
+      id: d._id, name: d.filename, kind: prettyDocType(d.docType), icon: iconForDocType(d.docType), clickable: true,
       sub: d.unreadable ? d.unreadableReason || 'Could not be read clearly.' : d.summary || '',
       status: 'done',
-      fieldCount: `${(d.fields || []).length} fields extracted`,
-      flagLabel: (d.fields || []).some((f) => f.needsReview) ? 'needs review' : 'clean',
+      fieldCount: `${(d.fields || []).length} details found`,
+      // Skipped pages outrank "looks clear" — telling someone their tenancy
+      // agreement looks clear when four of its seven pages were never read is
+      // the single most misleading thing this row could say.
+      flagLabel: (() => {
+        const skipped = (d.extraction?.unreadableParts || []).length;
+        if (skipped) return `${skipped} page${skipped === 1 ? '' : 's'} unread`;
+        return (d.fields || []).some((f) => f.needsReview) ? 'worth a check' : 'looks clear';
+      })(),
+      // A page is skipped for being too slow, and how slow a page is varies
+      // between runs — so offering another go is worth something real here,
+      // not just a button that repeats the same outcome.
+      actions: (d.extraction?.unreadableParts || []).length
+        ? [{ label: 'Try the missing pages', cls: 'btn-ghost', run: () => handleRetryDocument(d._id) }]
+        : [],
     };
   });
   const pendingItems = inFlight.map((u) => ({
     id: u.tempId, name: u.filename, kind: 'Reading…', icon: 'ph ph-tray-arrow-down', clickable: false,
-    sub: 'Uploading and extracting fields…', status: 'pending', pct: 65, stage: 'reading',
+    sub: 'Reading your document…', status: 'pending', pct: 65, stage: 'reading',
   }));
 
   const realIngest = {
@@ -494,8 +547,8 @@ export function useSift() {
     onFiles: handleFiles,
     onSample: (sample) => runUpload(sample.filename, () => api.uploadRawText(sample.filename, sample.text)),
     dropDisabled: false,
-    dropNote: 'No schema needed — fields are inferred per document and merged into the dataset',
-    readyLabel: `${documents.filter((d) => d.status === 'done').length} ready${inFlight.length ? ` · ${inFlight.length} reading` : ''}`,
+    dropNote: 'PDF, Word, a photo, a scan or plain text — nothing to set up first',
+    readyLabel: `${documents.filter((d) => d.status === 'done').length} ready to use${inFlight.length ? ` · ${inFlight.length} still reading` : ''}`,
     items: [...failedUploads, ...queueItems, ...pendingItems],
     openDoc,
     deleteAll: handleDeleteAllDocuments,
@@ -513,11 +566,11 @@ export function useSift() {
       .slice(0, 8)
       .map((d) => ({ id: d._id, label: d.filename, active: docId === d._id, go: () => openDoc(d._id) })),
     meta: doc ? `${doc.mimeType} · ${(doc.sizeBytes / 1024).toFixed(0)}KB` : '',
-    schemaNote: doc ? `${(doc.fields || []).length} fields inferred from the document itself — no template was applied` : '',
-    newFields: doc?.newFieldKeys || [],
+    schemaNote: doc ? `${(doc.fields || []).length} details read straight from this document — nothing was assumed or filled in for you` : '',
+    newFields: (doc?.newFieldKeys || []).map(humanizeKey),
     readable: !!doc && !doc.unreadable,
-    unreadableTitle: 'No text could be recovered',
-    unreadableText: doc?.unreadableReason || 'The document could not be read clearly enough to extract structured data.',
+    unreadableTitle: 'We couldn’t read this one',
+    unreadableText: doc?.unreadableReason || 'The text wasn’t clear enough to read. A sharper photo or scan usually fixes it.',
     deleteDocument: () => docId && handleDeleteDocument(docId),
     docLines: doc ? buildProvenanceLines(doc.documentText, doc.fields).map((line) => ({
       kind: line.kind,
@@ -549,8 +602,18 @@ export function useSift() {
         onLeave: () => setHover(null),
       };
     }),
-    truncated: false,
-    truncatedNote: '',
+    // Pages the reader had to skip. Saying so plainly is the point: a
+    // document presented as complete when a page is missing is worse than
+    // one that tells you which page to go read yourself.
+    truncated: (doc?.extraction?.unreadableParts || []).length > 0,
+    truncatedNote: (() => {
+      const parts = doc?.extraction?.unreadableParts || [];
+      if (!parts.length) return '';
+      const list = parts.join(', ');
+      return parts.length === 1
+        ? `We couldn't read page ${list} — it was too dense or too unclear. Everything from the other pages is here.`
+        : `We couldn't read pages ${list} — they were too dense or too unclear. Everything from the other pages is here.`;
+    })(),
     notice: doc?.unreadable
       ? null
       : (doc?.fields || []).some((f) => f.sensitive)
@@ -561,6 +624,7 @@ export function useSift() {
           actions: [],
         }
       : null,
+    active,
     clearActive: () => { setActive(null); setHover(null); },
     goAsk: () => setScreen('ask'),
     goIngest: () => setScreen('ingest'),
@@ -593,27 +657,27 @@ export function useSift() {
     : null;
 
   const realAsk = {
-    heading: documents.length ? `${documents.length} document${documents.length === 1 ? '' : 's'}, no shared schema. Here is what they can answer.` : 'Upload a document to start asking questions.',
+    heading: documents.length ? `Ask anything about your ${documents.length} document${documents.length === 1 ? '' : 's'}.` : 'Add a document first, then ask it anything.',
     draft: askDraft,
     onDraft: setAskDraft,
     submit: () => runAskReal(askDraft),
     busy: askBusy,
-    busyStage: 'Matching your question against the extracted fields',
+    busyStage: 'Looking through your documents',
     busyPct: askBusy ? 60 : 0,
     error: askError,
     answer: askAnswer,
     suggestions: suggestions.map((q, i) => ({
-      rank: String(i + 1).padStart(2, '0'), text: q.text, source: (q.docTypes || []).join(', ') || 'corpus', score: Math.max(0.5, 1 - i * 0.08),
+      rank: String(i + 1).padStart(2, '0'), text: q.text, source: (q.docTypes || []).map(prettyDocType).join(', ') || 'your documents', score: Math.max(0.5, 1 - i * 0.08),
       ask: () => runAskReal(q.text),
     })),
-    suggestionsHint: "generated from your documents' extracted fields",
+    suggestionsHint: 'Based on what we found in your documents',
   };
 
   const realChat = {
     open: chatOpen, badge: chatBadge,
     toggle: () => { setChatOpen((o) => !o); setChatBadge(false); },
     broken: false,
-    status: `${documents.filter((d) => d.status === 'done').length} documents · answers carry citations`,
+    status: `${documents.filter((d) => d.status === 'done').length} documents · every answer shows where it came from`,
     busy: chatBusy,
     msgs: chatMsgs.map((m, i) => ({
       key: i, role: m.role, title: m.title || '', text: m.text,
