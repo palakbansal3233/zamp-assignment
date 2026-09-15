@@ -35,11 +35,18 @@ function asPublicDoc(doc) {
  */
 async function runExtractionChunks(doc, buffer, classification) {
   const startedAt = Date.now();
-  const plan = await getChunkPlan({ kind: classification.kind, buffer });
+  let plan = await getChunkPlan({
+    kind: classification.kind,
+    buffer,
+    // Resume at whatever slice size this document has already been shown to
+    // need, rather than re-learning it the slow way on every request.
+    pagesPerChunk: doc.extraction.pagesPerChunk || undefined,
+  });
 
   doc.extraction.totalChunks = plan.totalChunks;
   doc.extraction.unit = plan.unit;
   doc.extraction.totalUnits = plan.totalUnits;
+  if (plan.pagesPerChunk) doc.extraction.pagesPerChunk = plan.pagesPerChunk;
 
   let chunksThisRequest = 0;
   let slowestChunkMs = 0;
@@ -55,7 +62,11 @@ async function runExtractionChunks(doc, buffer, classification) {
     // another chunk if the slowest one so far would still fit.
     if (chunksThisRequest > 0) {
       const elapsed = Date.now() - startedAt;
-      if (elapsed + slowestChunkMs > config.requestChunkBudgetMs) break;
+      // `>=`, not `>`: this budget exists to stay under a hard platform
+      // ceiling, so a predicted finish that lands exactly on it should stop,
+      // not start another chunk. (It also makes the rule hold at a budget of
+      // zero, where `0 > 0` was false and a second chunk slipped through.)
+      if (elapsed + slowestChunkMs >= config.requestChunkBudgetMs) break;
     }
 
     const chunkStartedAt = Date.now();
@@ -69,7 +80,60 @@ async function runExtractionChunks(doc, buffer, classification) {
       plan,
     });
 
-    const result = await extractStructuredData(input);
+    let result;
+    try {
+      result = await extractStructuredData(input);
+    } catch (err) {
+      // A chunk that times out is usually not a broken document — it's a
+      // scanned or photographed page, where the model has to read pixels
+      // rather than text and a two-page slice simply doesn't fit in the
+      // time one request gets. Failing here used to mark the whole document
+      // `error` with nothing extracted, and since Retry re-ran the exact
+      // same oversized slice it failed identically every time: a permanent
+      // dead end with zero output. So halve the slice and try again — the
+      // work already banked by earlier chunks is untouched.
+      if (!err.timedOut || plan.unit !== 'page') throw err;
+
+      // Already down to a single page and it still won't read in time.
+      // Measured on a real signed tenancy agreement: most scanned pages take
+      // ~20s, but a dense one took 34s — longer than any request we're given,
+      // and a page is the smallest thing there is to split. Failing the whole
+      // document over it would throw away every page that *did* read, which
+      // is the opposite of what this product is for. So skip that page, note
+      // it honestly, and carry on.
+      if (plan.pagesPerChunk <= 1) {
+        const pageNumber = index + 1;
+        if (!doc.extraction.unreadableParts.includes(pageNumber)) {
+          doc.extraction.unreadableParts.push(pageNumber);
+        }
+        doc.extraction.nextChunkIndex = index + 1;
+        doc.extraction.completedChunks = index + 1;
+        doc.status = doc.extraction.nextChunkIndex >= plan.totalChunks ? 'done' : 'processing';
+        await doc.save();
+        chunksThisRequest += 1;
+        slowestChunkMs = Math.max(slowestChunkMs, Date.now() - chunkStartedAt);
+        continue;
+      }
+
+      const smaller = Math.max(1, Math.floor(plan.pagesPerChunk / 2));
+      // Re-planning renumbers the chunks, so carry the position across as a
+      // page offset. Halving keeps the boundary aligned, so no page is
+      // re-read or skipped.
+      const pageOffset = index * plan.pagesPerChunk;
+      plan = await getChunkPlan({ kind: classification.kind, buffer, pagesPerChunk: smaller });
+      doc.extraction.pagesPerChunk = plan.pagesPerChunk;
+      doc.extraction.totalChunks = plan.totalChunks;
+      doc.extraction.nextChunkIndex = Math.floor(pageOffset / plan.pagesPerChunk);
+      doc.extraction.completedChunks = doc.extraction.nextChunkIndex;
+      doc.status = 'processing';
+      await doc.save();
+      // Don't count this against the budget as progress — let the loop's own
+      // budget check decide whether there's time to attempt the smaller slice
+      // in this request or hand it to the next one.
+      slowestChunkMs = Math.max(slowestChunkMs, Date.now() - chunkStartedAt);
+      chunksThisRequest += 1;
+      continue;
+    }
     const merged = mergeChunkResult(doc, result);
 
     doc.fields = merged.fields;
@@ -94,6 +158,19 @@ async function runExtractionChunks(doc, buffer, classification) {
     await doc.save();
     chunksThisRequest += 1;
     slowestChunkMs = Math.max(slowestChunkMs, Date.now() - chunkStartedAt);
+  }
+
+  // Skipping pages is fine as long as *something* was read. If every part was
+  // skipped there is no document here, and calling that "done" would show a
+  // finished-looking record with nothing in it — the one outcome more
+  // confusing than an honest failure.
+  const finished = doc.extraction.nextChunkIndex >= plan.totalChunks;
+  const readNothing = !doc.documentText && (doc.fields || []).length === 0;
+  if (finished && readNothing && doc.extraction.unreadableParts.length > 0) {
+    doc.unreadable = true;
+    doc.unreadableReason =
+      'None of this document could be read in time. It may be a scan of very dense pages — a clearer or smaller file usually works.';
+    await doc.save();
   }
 
   return doc;
@@ -155,8 +232,8 @@ async function uploadDocument(req, res) {
     // and `nextChunkIndex` still points at where to resume.
     doc.errorMessage =
       doc.extraction.completedChunks > 0
-        ? `${err.message} (read ${doc.extraction.completedChunks} of ${doc.extraction.totalChunks} parts before this — retry to continue from there)`
-        : err.message || 'Extraction failed for an unknown reason.';
+        ? `${err.message} We saved the ${doc.extraction.completedChunks} of ${doc.extraction.totalChunks} parts already read — choose "Keep reading" to carry on from there.`
+        : err.message || 'Something went wrong while reading this document.';
     await doc.save();
     // Still return 201 — the upload succeeded and is queryable; only
     // extraction failed. The client shows the per-document error inline
@@ -258,6 +335,10 @@ async function continueExtraction(req, res, { fromScratch }) {
   if (fromScratch) {
     doc.extraction.nextChunkIndex = 0;
     doc.extraction.completedChunks = 0;
+    // Clear the skip list too — this is a fresh read, so pages that were too
+    // slow last time get another go. Page latency varies run to run, so a
+    // retry is a genuine second chance, not a replay of the same outcome.
+    doc.extraction.unreadableParts = [];
     doc.fields = [];
     doc.documentText = '';
     doc.docType = null;
@@ -278,8 +359,8 @@ async function continueExtraction(req, res, { fromScratch }) {
     doc.status = 'error';
     doc.errorMessage =
       doc.extraction.completedChunks > 0
-        ? `${err.message} (read ${doc.extraction.completedChunks} of ${doc.extraction.totalChunks} parts before this — retry to continue from there)`
-        : err.message || 'Extraction failed for an unknown reason.';
+        ? `${err.message} We saved the ${doc.extraction.completedChunks} of ${doc.extraction.totalChunks} parts already read — choose "Keep reading" to carry on from there.`
+        : err.message || 'Something went wrong while reading this document.';
     await doc.save();
   }
 

@@ -33,6 +33,13 @@ let app;
 beforeAll(async () => {
   mongod = await MongoMemoryServer.create();
   await mongoose.connect(mongod.getUri());
+  // Build indexes before any test runs. Keyword search uses the `$text`
+  // index, and Mongoose creates indexes in the background — so without this
+  // a search could run against a not-yet-built index and return nothing,
+  // failing a test that has nothing wrong with it. (The app's own connect
+  // helper awaits this for the same reason; these tests bypass it by
+  // connecting directly.)
+  await require('../src/models/Document').init();
   app = createApp();
 }, 60000);
 
@@ -304,7 +311,11 @@ describe('POST /documents (long documents, chunked + resumable)', () => {
     // The first chunk's work survives the second chunk's failure.
     expect(res.body.fields.map((f) => f.key)).toEqual(['rent']);
     expect(res.body.documentText).toBe('part one');
-    expect(res.body.errorMessage).toMatch(/read 1 of 3 parts/i);
+    // The message has to say, in plain words, that the work was kept and how
+    // to carry on — "failed" with no mention of the saved parts is what sent
+    // someone hunting for results that were there all along.
+    expect(res.body.errorMessage).toMatch(/1 of 3 parts already read/i);
+    expect(res.body.errorMessage).toMatch(/keep reading/i);
     // ...and it's resumable from exactly there.
     expect(res.body.extraction.nextChunkIndex).toBe(1);
   });
@@ -321,6 +332,131 @@ describe('POST /documents (long documents, chunked + resumable)', () => {
     const res = await request(app).post(`/documents/${created._id}/retry`);
     expect(res.body.extraction.completedChunks).toBe(1);
     expect(extractStructuredData).toHaveBeenCalledTimes(1); // read again from scratch
+  });
+});
+
+// A scanned or photographed page makes the model read pixels rather than
+// text, which is dramatically slower — slow enough that a two-page slice
+// can blow the per-chunk timeout. This used to be a permanent dead end: the
+// document went straight to `error` with nothing extracted, and Retry re-ran
+// the identical oversized slice and failed the same way, forever. Found in
+// production on a signed 7-page tenancy agreement.
+describe('POST /documents (a chunk too slow to read is retried smaller)', () => {
+  const { PDFDocument } = require('pdf-lib');
+  const { PAGES_PER_CHUNK } = require('../src/services/chunking');
+
+  async function scannedPdf(pageCount) {
+    const pdf = await PDFDocument.create();
+    for (let i = 0; i < pageCount; i += 1) pdf.addPage([200, 200]);
+    return Buffer.from(await pdf.save());
+  }
+
+  const uploadPdf = async (pages) =>
+    request(app)
+      .post('/documents')
+      .send({
+        filename: 'tenant_agreement_signed.pdf',
+        mimeType: 'application/pdf',
+        dataBase64: (await scannedPdf(pages)).toString('base64'),
+      });
+
+  const timeout = () => {
+    const err = new Error('Extraction timed out.');
+    err.timedOut = true;
+    return err;
+  };
+  const page = (key) => ({
+    unreadable: false, unreadableReason: null, docType: 'rental_agreement',
+    summary: 'A tenancy agreement.', documentText: key, fields: [field(key, 1)],
+  });
+
+  test('a timed-out chunk halves the slice and keeps going, instead of failing the document', async () => {
+    // Every full-size (2-page) slice times out; single pages read fine.
+    extractStructuredData.mockImplementation(async (input) => {
+      const pageCount = (await PDFDocument.load(input.buffer)).getPageCount();
+      if (pageCount > 1) throw timeout();
+      return page('rent');
+    });
+
+    const res = await uploadPdf(4);
+
+    expect(res.status).toBe(201);
+    // The document must NOT be a dead end with nothing to show.
+    expect(res.body.status).not.toBe('error');
+    expect(res.body.extraction.pagesPerChunk).toBe(1);
+    expect(res.body.extraction.totalChunks).toBe(4); // re-planned at 1 page each
+  });
+
+  test('the narrower slice is remembered, so a resume in a fresh container does not relearn it the slow way', async () => {
+    extractStructuredData.mockImplementation(async (input) => {
+      const pageCount = (await PDFDocument.load(input.buffer)).getPageCount();
+      if (pageCount > 1) throw timeout();
+      return page('rent');
+    });
+
+    const created = (await uploadPdf(4)).body;
+    expect(created.extraction.pagesPerChunk).toBe(1);
+
+    // Resume: every subsequent call must already be a single page, so no
+    // further time is burned rediscovering that two pages is too slow.
+    extractStructuredData.mockClear();
+    await request(app).post(`/documents/${created._id}/resume`);
+    for (const call of extractStructuredData.mock.calls) {
+      // eslint-disable-next-line no-await-in-loop
+      expect((await PDFDocument.load(call[0].buffer)).getPageCount()).toBe(1);
+    }
+  });
+
+  // Measured on the real document: a typical scanned page took 20.7s but a
+  // dense one took 34.1s — longer than a request lasts, and a page is the
+  // smallest unit there is. Losing the other six pages over that one is the
+  // opposite of what this product is for.
+  test('a page that will not read even alone is skipped and reported, not fatal', async () => {
+    let call = 0;
+    extractStructuredData.mockImplementation(async (input) => {
+      const pageCount = (await PDFDocument.load(input.buffer)).getPageCount();
+      if (pageCount > 1) throw timeout(); // force the shrink to single pages
+      call += 1;
+      if (call === 2) throw timeout(); // the second page is the stubborn one
+      return page(`p${call}`);
+    });
+
+    const res = await uploadPdf(3);
+
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe('done');
+    // The unreadable page is named, not silently dropped.
+    expect(res.body.extraction.unreadableParts).toEqual([2]);
+    // ...and the pages that did read are all still there.
+    expect(res.body.fields.length).toBeGreaterThan(0);
+    expect(res.body.documentText).toContain('p1');
+  });
+
+  test('every page failing is still an honest failure, not a silently empty success', async () => {
+    extractStructuredData.mockRejectedValue(timeout());
+
+    const res = await uploadPdf(2);
+
+    expect(res.status).toBe(201);
+    // Nothing was read, so this must not masquerade as a finished document
+    // showing "0 details found".
+    expect(res.body.fields).toHaveLength(0);
+    expect(res.body.documentText).toBe('');
+    expect(res.body.extraction.unreadableParts.length).toBeGreaterThan(0);
+    expect(res.body.unreadable).toBe(true);
+    expect(res.body.unreadableReason).toMatch(/could not|couldn|none of this/i);
+    // It shrank once, then skipped each page rather than looping forever.
+    expect(extractStructuredData.mock.calls.length).toBeLessThanOrEqual(PAGES_PER_CHUNK + 3);
+  });
+
+  test('a non-timeout failure is not retried smaller — only slowness is worth re-slicing for', async () => {
+    extractStructuredData.mockRejectedValue(new Error('Model refused the request.'));
+
+    const res = await uploadPdf(4);
+
+    expect(res.body.status).toBe('error');
+    expect(res.body.errorMessage).toMatch(/refused/i);
+    expect(extractStructuredData).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -26,7 +26,7 @@ async function docxToText(buffer) {
  * the counts, so a resume never depends on in-memory state from an earlier
  * invocation (it can't: each one is a separate serverless container).
  */
-async function getChunkPlan({ kind, buffer }) {
+async function getChunkPlan({ kind, buffer, pagesPerChunk = PAGES_PER_CHUNK }) {
   if (kind === 'pdf') {
     let pdf;
     try {
@@ -38,7 +38,13 @@ async function getChunkPlan({ kind, buffer }) {
       );
     }
     const pages = pdf.getPageCount();
-    return { totalChunks: Math.max(1, Math.ceil(pages / PAGES_PER_CHUNK)), totalUnits: pages, unit: 'page' };
+    const size = Math.max(1, pagesPerChunk);
+    return {
+      totalChunks: Math.max(1, Math.ceil(pages / size)),
+      totalUnits: pages,
+      unit: 'page',
+      pagesPerChunk: size,
+    };
   }
 
   if (kind === 'docx' || kind === 'text') {
@@ -69,8 +75,9 @@ async function buildChunkInput({ kind, buffer, filename, mimeType, index, plan }
   if (kind === 'pdf') {
     if (isSingleChunk) return { kind: 'pdf', filename, buffer, chunkContext };
     const source = await PDFDocument.load(buffer, { ignoreEncryption: true });
-    const start = index * PAGES_PER_CHUNK;
-    const end = Math.min(start + PAGES_PER_CHUNK, source.getPageCount());
+    const size = Math.max(1, plan.pagesPerChunk || PAGES_PER_CHUNK);
+    const start = index * size;
+    const end = Math.min(start + size, source.getPageCount());
     const slice = await PDFDocument.create();
     const pages = await slice.copyPages(source, Array.from({ length: end - start }, (_, i) => start + i));
     pages.forEach((p) => slice.addPage(p));

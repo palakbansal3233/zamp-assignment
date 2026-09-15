@@ -233,7 +233,7 @@ async function extractStructuredData(input) {
   const response = await withTimeout(
     request,
     config.extractionTimeoutMs,
-    'Extraction timed out. Large or multi-page documents can exceed the time limit — try a smaller file or fewer pages.'
+    'This part of the document took too long to read.'
   );
 
   const toolUse = response.content.find((block) => block.type === 'tool_use');

@@ -101,6 +101,20 @@ const DocumentSchema = new Schema(
       nextChunkIndex: { type: Number, default: 0 },
       unit: { type: String, default: 'whole' }, // 'page' | 'char' | 'whole'
       totalUnits: { type: Number, default: 0 },
+      // How many pages this particular document is read at a time. Normally
+      // the default, but a scanned/photographed page is far slower to read
+      // than a text one, so a chunk that times out gets retried smaller and
+      // that narrower size is remembered here. It has to be persisted, not
+      // just held in memory: each resume is a separate serverless container,
+      // and without this the next one would go straight back to the size
+      // that already proved too slow.
+      pagesPerChunk: { type: Number, default: 0 },
+      // Pages that could not be read even on their own, and were skipped so
+      // the rest of the document could still be delivered. Recorded rather
+      // than hidden — "here is the document, minus page 4" is honest and
+      // useful; silently returning six pages as though they were seven is
+      // neither.
+      unreadableParts: { type: [Number], default: [] },
     },
 
     unreadable: { type: Boolean, default: false },

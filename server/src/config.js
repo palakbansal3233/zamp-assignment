@@ -16,7 +16,21 @@ const config = {
   // with a clear error rather than hanging until the platform kills the
   // function. This bounds one chunk, not one document — a long document is
   // read across several requests (see documentsController#runExtractionChunks).
-  extractionTimeoutMs: parseInt(process.env.EXTRACTION_TIMEOUT_MS || '45000', 10),
+  //
+  // This has to stay *below* the platform's request ceiling, because the
+  // controller always reads at least one chunk per request — so one chunk's
+  // timeout is the real worst case for the whole request. It was 45s, which
+  // was longer than the ceiling and so guaranteed the edge would kill the
+  // request (a 504) before our own error could ever be returned. A chunk
+  // that can't finish in 24s is retried at half the size, and a single page
+  // that still won't read is skipped and reported rather than failing the
+  // whole document.
+  //
+  // 24s is measured, not guessed: on a real scanned tenancy agreement a
+  // typical page took 20.7s and a dense one 34.1s. So this sits above the
+  // common case and below the platform's ~26s ceiling — the occasional
+  // genuinely-too-slow page is the one that gets skipped.
+  extractionTimeoutMs: parseInt(process.env.EXTRACTION_TIMEOUT_MS || '24000', 10),
   // How much wall-clock one upload/resume request will spend reading chunks
   // before returning what it has and letting the client resume. The point
   // is that a document's length stops being coupled to the platform's
