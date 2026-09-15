@@ -1,79 +1,199 @@
-# decisions.md
+# [decisions.md](http://decisions.md)
 
-The calls that shaped **Sift**, what I seriously considered instead, and what I left out on purpose — including the places where production told me I was wrong.
+**Sift** takes a document you can't fully read and turns it into information you can search, check, and ask questions about.
 
----
-
-### 1. The model decides the schema, not me
-
-The brief said *messy documents*. The safe reading is: pick one type — invoices — hard-code a schema, extract against it. Reliable, demoable, and to anyone who has seen an invoice parser, unremarkable. It also quietly deletes the actual problem, because if you already know the schema, the document was never unstructured.
-
-So extraction returns whatever fields the document actually has. A lease yields `rent` and `notice_period`; a prescription yields `medications` and `nhs_number`; nothing is declared in advance. That propagates everywhere: documents store an array of self-describing field descriptors rather than typed columns, the search index is built by flattening whatever came back, and search is grounded in the field keys actually observed rather than a fixed list.
-
-One concrete tradeoff falls out of it. Search filters query a flat `fieldIndex.<key>` shadow of the fields array rather than `$elemMatch` against the array itself. `$elemMatch` is the more "correct" query, but it would push real complexity into the filter sanitiser — the one function most worth keeping small and auditable — to support filtering on field *metadata* that search never used.
-
-The price, accepted deliberately, is no per-type UI — no invoice line-item table, no resume timeline. A domain-specific build would screenshot better. I would rather be judged on the part that is hard.
-
-### 2. Built for one person holding one document that matters
-
-Not a finance team processing 500 invoices a day; they have a schema and a vendor already. This is for someone with a twelve-page tenancy agreement they are about to sign, or a prescription in handwriting they need to read out to a friend collecting the medicines.
-
-That persona is load-bearing rather than decorative. Low-frequency and high-stakes means one document at a time, watched — which is why synchronous processing is *correct* here rather than a compromise, and why I spent the infrastructure budget on making long documents work instead of on a job queue. A durable queue was the obvious "production-grade" move and would have bought this user nothing.
-
-It also sets the bar for the interface. Someone in that position needs the facts pulled out without being asked to define "the facts", a way to check the machine's work before acting on it, honesty about what was uncertain, and a warning before they forward something they shouldn't. Features that didn't serve one of those four didn't get built — and one that stopped serving them got deleted late on, when I couldn't justify it out loud.
-
-### 3. The model is never trusted, structurally
-
-Every AI call uses forced tool use: Claude is handed a schema and required to call it, so there is no `JSON.parse()` on model prose anywhere in the codebase. That removes the commonest failure mode in LLM apps by construction, rather than by wrapping a parser in retries.
-
-Beyond format, three things treat the model as hostile. Smart search lets it propose MongoDB filters, so a sanitiser whitelists the permitted field paths — NoSQL-injection prevention where the attacker is the model. Every citation in an answer is re-checked against the database: does that document exist, is it finished, does it genuinely have that field. And if nothing survives that check while the model claimed an answer, the response becomes a refusal, because an answer whose citations don't verify is a guess in a costume.
-
-The alternative — trust the output, validate loosely — is faster and fine for a demo. For someone about to sign a lease or measure a dose, a confident wrong answer is worse than none, so the extra layer earns its keep.
-
-### 4. Show where every value came from
-
-Each field carries a verbatim quote from the document, and clicking a value highlights that exact span in the original. The alternative, showing a confidence score and asking for trust, fails at the only moment that matters: checking the deposit figure against the actual clause before signing. On the sample agreement — which says 2,175.00 in clause 4 and 2,750.00 in Schedule A — the UI shows the contradiction and offers a button for each reading, and records *which one a human picked* rather than inferring a new number from it.
-
-I considered drawing bounding boxes over the source image, which looks more impressive and is far more work. Substring matching against the model's own transcription reaches the same outcome and degrades safely: a quote that isn't really in the text just doesn't highlight, rather than breaking the page.
-
-Cut: per-leaf provenance for compound values. A medication list is one field with one quote covering its region, not one quote per medicine. That's a scoping call, and I'd rather name it than have it discovered.
-
-### 5. A long document is a sequence of chunks, not one call
-
-A ten-page scanned agreement takes longer to read than any serverless platform will hold a request open. Raising the timeout is the obvious fix and merely moves the failure to page twenty. So a document became a sequence of bounded chunks — real smaller PDFs, each its own model call, results saved after *every* chunk, with a resume pointer. A timeout, a crash or a closed laptop costs you one chunk, not the document.
-
-Production corrected me twice. The first deploy returned `504 Inactivity Timeout`: my request budget decided whether a chunk could *start*, not whether it could finish, so a chunk beginning at 29s ran the request past the limit — bounded at the wrong end. Then a genuinely signed agreement failed outright, because it was scanned and the model was reading pixels. I measured rather than guessed: a typical page took **20.7s**, a dense one **34.1s**. Now a slow chunk retries at half size, and a page that still won't read is skipped and *named* — "pages 2–5 couldn't be read" — instead of losing the three that read perfectly well. That one document went from an error with zero fields to 34 fields and an honest note about the gap.
-
-What I haven't done, and won't pretend otherwise: a 34-second page cannot be read inside a synchronous request at all. That needs background functions with polling — an architecture change, not a tuning knob — so it's written down rather than half-built.
-
-### 6. No vector database
-
-The reflex for "ask questions about your documents" is embeddings and a vector store. I went the other way for a specific reason: extraction has *already* structured the corpus. Re-embedding text I've just parsed into labelled fields is less precise than grounding the model in those fields directly, at the scale one person's documents reach. Running a second datastore to do a worse job isn't a tradeoff worth making.
-
-It buys more than simplicity. Answers cite specific fields rather than vague passages, which is what makes verification possible at all — and two features fell out of it: conflict detection when two documents disagree on the same field, and "Ask this document", where the digest contains exactly one document so an answer from elsewhere is impossible rather than discouraged.
-
-Cut: cross-document entity resolution. Conflict detection works when two documents use the same field key; recognising that `price_escalator_note` and `price_cap_percentage` describe the same fact is a much larger problem. I'd revisit embeddings the day "find documents about a similar topic" becomes a requirement — that's the query they're actually for.
-
-### 7. Privacy enforced in one place, not twenty
-
-One public link originally meant one shared pile of documents, so sending someone the link handed them your tenancy agreement. The obvious fix is scoping every database query by visitor. There are about twenty of them, and one forgotten `.find()` is a silent leak no obvious test catches.
-
-So the session rides in `AsyncLocalStorage` and is injected into every query by Mongoose middleware. A rule that must hold everywhere belongs somewhere it can't be bypassed by forgetting, and queries written later inherit it for free. Accounts would have solved this too, at the cost of a signup flow nobody wants before reading one lease.
-
-Reality corrected me twice again. Deleting data when the browser says goodbye seemed obvious until I noticed that event also fires on *reload* — pressing F5 destroyed everything you'd uploaded. Leaving now schedules an expiry that a returning tab cancels. And my own test helper turned out not to be testing anything: it built a query but returned before running it, so the isolation context had already closed and the queries ran unscoped. Production was never affected, but the tests were quietly lying, which is worse than tests that fail.
-
-### 8. Tests aimed at what would actually hurt
-
-113 tests, run in randomised order so none passes by accident of sequence. They're pointed at properties rather than coverage: that a citation to a nonexistent document is dropped, that a more confident later chunk cannot clear an earlier "needs checking" flag, that one visitor cannot open another's document even knowing its id.
-
-Separately there's a golden eval — sixteen real questions against the real endpoint, scoring retrieval accuracy apart from generation accuracy, because a prompt tweak can't fix a retrieval miss and one number hides which half broke. It sits deliberately outside `npm test`: it makes real API calls that cost real money, and a suite you're reluctant to run is a suite nobody runs.
-
-Setup is one install and one command, and the app runs with no API key at all — uploads save, extraction reports a clear reason per document, search falls back to keyword, and a banner explains why. Anyone evaluating this should see it work before it asks them for a credit card.
+This file is the record of what I decided while building it, what I considered instead, and what I deliberately left out.
 
 ---
 
-### What I left out, in one place
+## Who I built this for
 
-Accounts and multi-user, a job queue, a vector index, cross-document entity resolution, per-type UI, per-leaf provenance, `.doc`/audio/video/archives, and background functions for genuinely unreadable scanned pages.
+One person, one document that matters, read carefully. It is not built for a finance team processing 500 invoices a day. Those teams already know what their documents look like and can buy software that handles them.
 
-Every one is a real capability and several are what I'd build next. They're absent because the time went into the parts this user actually feels: that a long document doesn't lose its work, that every number can be traced to the line it came from, and that an answer nobody can verify never gets shown at all.
+What that person actually needs, in order of importance:
+
+1. The facts pulled out, without being asked to define what "the facts" are
+2. A way to check the machine's work before acting on it
+3. Honesty about anything that wasn't clear
+4. A warning before they forward something they shouldn't
+
+Every decision below traces back to one of those four. Anything that didn't, I didn't build.
+
+---
+
+
+
+## Where this started, and what I traded away
+
+That is not where I began.
+
+The first thing I wanted to build was a permission-aware knowledge system for a B2B software company. I'm deliberately not calling it a PDF chatbot, because the interesting part isn't the chat.
+
+The idea: an account manager needs an answer that lives scattered across project documentation, support tickets, call transcripts, internal policies, maybe a Slack export. They ask something like *"what did we promise this customer, and has the product team committed to a delivery date?"* The system gives them a grounded answer with citations, shows them only what they're actually authorised to see, and warns them when something is confidential and shouldn't be repeated back to the customer.
+
+I still think that's a good product. I didn't build it, for two reasons.
+
+**Most of the work is in the permissions layer, and permissions are plumbing.** Roles, an organisation model, per-document access rules, and a way to be confident someone never sees a line they shouldn't. That is a lot of well-understood work, and none of it is the interesting part of the problem. A week spent there would have produced a thin, generic answering engine sitting on top of a large pile of access-control code.
+
+**I couldn't have tested it honestly.** I don't have a company's support tickets, call transcripts or Slack history. I would have had to invent every one of them, and a system that has only ever seen data I wrote for it to see is not a system I have actually tested.
+
+So I cut it down to one person and one document. What I'd point out is how much of the original idea survived that cut:
+
+
+| From the original idea                               | What happened to it                                                                                                                       |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Answers grounded in citations                        | Kept, and hardened. Every citation is checked against the real record before it's shown.                                                  |
+| Warning that something is confidential               | Kept. Each extracted value can be flagged sensitive, and you're warned before you share it.                                               |
+| Answering across several sources at once             | Kept at smaller scale. Answers span documents, and it tells you when two of them disagree.                                                |
+| Saying "I don't know" instead of guessing            | Kept, and it's enforced rather than requested.                                                                                            |
+| Keeping one person's information away from another's | Kept in a simpler form. Every visitor gets an isolated space, and the mechanism that does it is the same one you'd use for real accounts. |
+| Roles and permissions                                | Cut. The largest piece of work and the least interesting.                                                                                 |
+| Connectors for tickets, transcripts, Slack           | Cut. No honest test data.                                                                                                                 |
+| Shared team workspaces                               | Cut. Follows from cutting accounts.                                                                                                       |
+
+
+The version I built is smaller, but the part I most wanted to get right (an answer you can check, that refuses when it should) is the part I kept.
+
+---
+
+
+
+## How I spent the week
+
+Roughly half of it before writing any application code.
+
+About **two and a half days on the problem itself**: what the product should be, who it was for, which reading of the brief was worth building. That included letting go of the enterprise idea above, which took longer than I'd like to admit.
+
+Then about **a day building a prototype in Claude Design**. Not styling, and not throwaway. I wanted to see all three screens and every state they could be in before committing to any of it: what an empty screen looks like, what a rejected file looks like, what an answer with nothing to support it looks like. Designing the failure states up front is the reason they aren't bugs I found later.
+
+That prototype ended up covering fifteen distinct states. Six of them are now driven by the real backend. The rest need infrastructure I chose not to build.
+
+That left roughly **three and a half days to build**, which is why so much of what follows is about what I didn't do.
+
+---
+
+
+
+## The constraints I was working inside
+
+**One week**, half of it spent deciding what to build.
+
+**MERN only, and no library unless I could name the problem it solved.** I know React, Node, Express and MongoDB well. Learning a new datastore mid-build would have cost me the time I wanted to spend on the actual problem. This is also part of the honest answer to "why no vector database" later on. There's an architectural reason too, and I think it's the stronger one, but familiarity was genuinely part of it and I'd rather say so.
+
+The dependencies I did add each do exactly one job: the Anthropic SDK to call the model, `pdf-lib` to split PDFs by page, `mammoth` to read Word files, `serverless-http` so the same Express app runs on Netlify. No state management library, no UI kit, no CSS framework.
+
+**$10 of Anthropic credit.** That shaped more than I expected, because reading a document costs money every single time, and reading a *scanned* document costs considerably more than a text one, since the model is working through an image rather than characters. I couldn't iterate by brute force. When a long scan behaved oddly I measured it once and reasoned about the result, instead of re-running until something worked.
+
+Three decisions come straight out of that budget:
+
+- **Results are saved after every piece of a long document.** If a ten-page read fails on page nine, I've already paid for nine pages and I'm not paying for them twice.
+- **The scoring run is not part of the normal test command.** Each run reads five documents and asks sixteen questions against the real model. That should be a deliberate choice, not something firing on every commit.
+- **Suggested questions are cached** and only regenerated when the documents actually change, rather than on every page load.
+
+---
+
+
+
+## The decisions
+
+
+
+### 1. Don't pick a document type
+
+This was the first real decision, and everything else follows from it.
+
+The obvious build is an invoice parser. You decide you're doing invoices, you write down the fields an invoice has, and you extract against that list. It works, it demos well, and it is a solved problem.
+
+I didn't do that, because it avoids the actual difficulty. If you already know the document is an invoice and you already know which fields to look for, the document was never really messy. The hard version of this problem is not knowing what's coming.
+
+So Sift has no document types and no templates. It reads whatever you give it and reports what it found. A lease comes back with rent and notice period. A prescription comes back with medications and an NHS number. None of that is decided in advance.
+
+What this cost me: there's no tailored screen for any particular kind of document. No invoice line-item table, no timeline view for a CV. A narrower build would look more finished in a screenshot, and I decided I'd rather be judged on the harder part.
+
+One technical consequence is worth explaining, because it's a genuine tradeoff. Since every document has different fields, they're stored as a list of self-describing entries rather than as fixed columns. But search needs to filter on those values, and filtering inside a list is awkward in MongoDB. So alongside the list I keep a simple flat copy of the same values, used only by search. That's duplicated data, which I normally avoid. I accepted it because the alternative pushed real complexity into the one piece of code I most wanted to keep small and easy to check by eye, which is the part that validates AI-generated search filters before they reach the database.
+
+### 2. Never trust what the model sends back
+
+Every call to the model is set up so it has to answer in a fixed shape. I give it a form and it has to fill that form in. It cannot reply with a paragraph that I then try to interpret. That means there is nowhere in this codebase that takes the model's writing and tries to parse it, which is the most common way applications like this break.
+
+Getting the shape right isn't enough, though, because the contents can still be wrong. Three things treat the model as untrusted:
+
+**Search filters.** The model helps turn a plain-English question into a database query. I don't run what it gives me. A whitelist checks which fields it is allowed to filter on and rejects anything else. This is ordinary injection protection, except the untrusted input is the AI rather than a person.
+
+**Citations.** When you ask a question, the answer names the documents and values it came from. Before any of that reaches the screen, I look each one up. Does that document exist? Has it finished processing? Does it genuinely have that value? Anything that fails is dropped.
+
+**Refusal.** If none of the citations survive that check but the model still claimed to have an answer, the answer is thrown away and you get a refusal instead. An answer whose sources don't exist is not an answer.
+
+The quicker option was to trust the output and validate loosely, which is fine for a demo. For someone about to sign a lease or measure out a dose, a confident wrong answer is worse than no answer at all.
+
+### 3. Show where every value came from
+
+Each extracted value carries the exact sentence it came from. Click the value and that sentence lights up in the original document.
+
+This is the answer to needing to check the machine's work. Showing a confidence score and asking you to trust it falls apart at the one moment that matters, which is when you want to verify the deposit figure against the actual clause before signing.
+
+The sample agreement built into the app is written to exercise this on purpose. It states the deposit as 2,175.00 in one clause and 2,750.00 in a schedule further down, which is the kind of thing that really does happen in a contract and really is easy to miss. Sift catches the contradiction, shows both figures, and asks which one is right. It records which reading the person chose. It does not try to work out a new number from that choice, because recording what someone decided is honest and guessing what they meant by it is not.
+
+I considered drawing boxes over the original image instead, which looks more impressive. It's also considerably more work, and matching the text gets to the same place. It fails gracefully too: if the model reports a sentence that isn't really in the document, that value simply doesn't highlight. Nothing breaks.
+
+What I cut: this works at the level of a whole value, not each part of one. A prescription's medication list is one value with one source sentence covering it, not a separate source for every medicine. That's a scoping decision and I'd rather name it than let someone discover it.
+
+### 4. Read long documents in pieces
+
+A long scanned agreement takes longer to read than any hosting platform will keep a request open. The easy fix is to raise the time limit, which just moves the failure to a longer document.
+
+So a document isn't one request any more. It's split into small pieces, each read separately, and **the results are saved after every single piece**. If something fails halfway, you keep everything read so far and it carries on from where it stopped rather than starting again. A timeout or a closed laptop costs you one piece, not the document. On a $10 budget it also means a failure doesn't throw away work I've already paid for.
+
+Two things went wrong in production that I could not have predicted from my machine.
+
+The first deploy returned a timeout error from the edge. The bug was in how I'd defined the time budget: it checked whether there was time to *start* another piece, not whether there was time to finish one. A piece starting at 29 seconds would run the whole request past the limit. I was measuring the wrong end.
+
+Then I uploaded my actual signed agreement, which is a scan, so the model is reading pixels rather than text. Every piece timed out, and because a failed document couldn't be opened and retrying repeated exactly the same failure, it was a dead end with nothing to show.
+
+Rather than guess, I measured how long a scanned page really takes. A normal page took 20.7 seconds. A dense one took 34.1. So now a piece that times out is retried at half the size, and a single page that still won't read is skipped and **named** ("pages 2 to 5 couldn't be read") instead of failing the whole document. That same agreement went from an error with nothing in it to 34 values extracted and an honest note about the gap.
+
+There's a limit I'm not going to pretend around. A page that takes 34 seconds cannot be read inside a request at all. Fixing that properly means moving to background processing with the page polling for updates, which is a change in architecture rather than a change in settings, so I've written it down rather than half-building it.
+
+### 5. No vector database
+
+The standard answer for "ask questions about your documents" is embeddings and a vector database. I went a different way, and the reason is specific rather than lazy.
+
+Extraction has *already* turned the documents into structured information. Converting that text back into vectors to search over it is less precise than simply giving the model the values it already produced. At the scale one person's documents actually reach, adding a second database to do a worse job isn't a trade I'd make. It would also have meant a second thing to run, configure and pay for, inside a week and a $10 budget.
+
+It buys something, too. Answers point at specific values rather than vague passages, which is what makes checking them possible in the first place. Two features came out of that almost for free: noticing when two documents disagree about the same thing, and "Ask this document", where only that one document is given to the model so an answer from anywhere else is impossible rather than just discouraged.
+
+What I cut: recognising that two documents describe the same fact under different names. Disagreements are caught when both documents use the same field name. Working out that `price_escalator_note` and `price_cap_percentage` mean the same thing is a much bigger problem than it sounds, and I'd rather name it than quietly leave it broken. It's also the piece the enterprise version would have needed most.
+
+I would revisit embeddings the day "find documents about a similar topic" becomes a requirement, because that is the question they're actually good at.
+
+### 6. Your documents are yours, and they don't stick around
+
+This is one public link. In the first version, everyone who opened it saw the same pile of documents, which means sending someone the link would have handed them my tenancy agreement. For a product built around documents you'd think twice about forwarding, that's the worst possible default.
+
+Every visitor now gets their own private space with no account to create, and their documents are cleared when they leave.
+
+The part I'd point to is where that rule is enforced. The obvious approach is to filter every database query by visitor. There are around twenty of those queries, and forgetting one is a silent privacy leak that no obvious test would catch. So instead, the visitor's identity is attached to the request itself and added to every query automatically, in one place. A rule that has to hold everywhere shouldn't depend on remembering it, and anything written later gets it for free. It is also the same mechanism real accounts would use, which is why this was the one piece of the original enterprise idea I could keep cheaply.
+
+Reality corrected me twice here. Deleting everything when the browser closes seemed obvious until I noticed the browser fires that same signal on a page refresh, so pressing F5 was wiping everything you'd uploaded. Leaving now schedules a deletion shortly afterwards, and coming back cancels it.
+
+The second one is more embarrassing and more useful. A helper in my test suite built a database query but returned before running it, which meant the privacy rules weren't applied during those tests at all. The tests were passing without testing the thing they claimed to test. Real users were never affected, because the live code path was correct, but a test that quietly lies is worse than one that fails.
+
+### 7. Test the things that would actually hurt
+
+There are 113 tests, run in a random order so that none of them pass by accident of sequence.
+
+They're aimed at behaviour rather than at coverage numbers. A citation pointing at a document that doesn't exist gets dropped. A later, more confident reading of a page can't quietly clear a warning raised by an earlier one. One visitor can't open another visitor's document even if they know its ID.
+
+There's also a separate scoring run: sixteen real questions asked against the real system, measuring two things apart from each other. Did it find the right information, and did it give the right answer. Those fail for different reasons, and a single score would hide which half broke.
+
+Setup is one install and one command. The app also runs with no API key at all: uploads still save, each document explains clearly why it couldn't be read, search falls back to keyword matching, and a banner says what's missing. Anyone evaluating this should be able to see it work before it asks them for a credit card.
+
+---
+
+
+
+## What I left out, and why
+
+Accounts, roles and permissions. Connectors for tickets, transcripts and Slack. Shared team workspaces. A job queue. A vector database. Matching the same fact across documents that name it differently. Tailored screens per document type. Source sentences for every item inside a list. Support for `.doc`, audio, video and archives. Background processing for scanned pages too slow to read in one request.
+
+Every one of those is a real feature and several are what I'd build next. They're missing because I'd rather hand over something small that works and that I can explain line by line than something broad that falls over the first time a real document hits it.
