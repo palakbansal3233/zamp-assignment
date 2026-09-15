@@ -41,7 +41,7 @@ Without an `ANTHROPIC_API_KEY` it still runs: uploads save, extraction reports a
 ## Tests
 
 ```bash
-npm test                          # 93 tests
+npm test                          # 98 tests
 npm run eval --workspace server   # golden eval (makes real API calls)
 ```
 

@@ -72,6 +72,8 @@ Every feature below traces back to one of those four. Anything that didn't, I di
 
 **Progress that means something.** A long document reports "page group 3 of 4", not a decorative animation — because it's genuinely reading in parts and each one is genuinely saved.
 
+**The product speaks the user's language, not its own.** This one I got wrong first time and fixed after watching it read cold. The screens said *Ingest*, *Queue*, *corpus*, *schema*, *dataset*, *inferred record*, "fields extracted" — my vocabulary, describing what the system does to a file. The persona in §2 is someone holding a tenancy agreement, not someone who has ever said "corpus". The nav icons carried no labels at all, only hover tooltips, which help nobody on a touchscreen and nobody who doesn't already know what the product is. So: the rail reads **Documents / Check / Ask**; machine keys stop reaching the screen raw (`book_page` → "Book page"); a boolean renders **Yes**, not `true`; and "Clear" — which sat one screen from a "Clear all" that permanently deletes everything — became "Unhighlight". Same word, wildly different stakes, is a bug even when every individual label is defensible.
+
 **Honest empty and failure states.** "No document selected" is a different message from "this document was unreadable", which is different again from "we couldn't reach the server", which is different from a real 404 for a document that was deleted. These all rendered identically at one point; they don't now. Actions that used to fail silently now say so.
 
 **The States panel is labelled.** The design includes a 15-scenario switcher. Six trigger genuine backend behaviour (a real oversized upload, a real blank scan, a real refusal). The rest need infrastructure I chose not to build (auth, billing, offline sync) and are tagged **(demo)** in the UI itself. Showing an offline banner I can't actually produce, without saying so, would be a lie told in pixels.
@@ -89,7 +91,7 @@ Every feature below traces back to one of those four. Anything that didn't, I di
 
 ## 5. Tests
 
-**93 tests, and they're pointed at the things that would actually hurt.**
+**98 tests, and they're pointed at the things that would actually hurt.**
 
 - The query sanitizer, against injection attempts (`$where`, operator objects smuggled as values, prototype-ish paths).
 - Citation verification: a hallucinated document id, a field key that doesn't exist, a malformed citation — each dropped; and the rule that **zero surviving citations forces a refusal** rather than an ungrounded answer.
@@ -128,7 +130,7 @@ One install, one command, both servers. `server/.env.example` documents every va
 
 ## 8. Velocity
 
-Working, deployed, and verified end-to-end: ingestion for PDF / DOCX / images / text, schema-agnostic extraction with provenance, confidence and sensitivity flagging, a review flow with human confirmation, keyword + LLM-filtered search, a cited-or-refusing Ask endpoint with cross-document conflict detection, chunked resumable reading of long documents, 93 tests, a golden eval harness, and a three-screen UI built from a design system — running on one Netlify deploy with MongoDB Atlas.
+Working, deployed, and verified end-to-end: ingestion for PDF / DOCX / images / text, schema-agnostic extraction with provenance, confidence and sensitivity flagging, a review flow with human confirmation, keyword + LLM-filtered search, a cited-or-refusing Ask endpoint with cross-document conflict detection, chunked resumable reading of long documents, 98 tests, a golden eval harness, and a three-screen UI built from a design system — running on one Netlify deploy with MongoDB Atlas.
 
 Two production bugs found and fixed against the live deployment, not just locally: an Atlas IP-allowlist issue, and a `basePath` mismatch where Netlify's rewrite passes the function the original client path rather than the internal one — which every prior test had "verified" against my own wrong assumption instead of the platform's real behaviour.
 
@@ -151,6 +153,19 @@ Three things fall out of that, and each one is a deliberate property rather than
 *Verified against production, not asserted:* a 10-page tenancy agreement → 5 chunks, 2 in the upload request (returning at 17.8s with those two already saved and readable) and 3 on one resume, complete in 34.8s. 24 fields spanning every page including the signature block, **zero** unverifiable quotes, bank details and the deposit reference flagged sensitive, and Ask correctly answering a question that required combining clause 5 with clause 9.
 
 **And the part that only production could teach me.** The first deployed attempt came back `504 Inactivity Timeout` from the edge. The bug was in how I'd defined "budget": it decided whether to *start* another chunk, so a chunk beginning at 29s could run the request past 45s — bounded at the wrong end. The fix is that the controller now refuses to start a chunk unless the slowest one so far would still fit, which bounds total elapsed time as intended; the budget dropped to 18s and chunks to 2 pages so one always fits comfortably. And because a request can die *after* the server has already saved chunks — the work survives, only the response is lost — the client now re-reads the document on failure and carries on if it advanced, rather than treating a dropped response as a dead document. Three changes, all written from one real HTTP status code rather than from imagination.
+
+**Then a real user handed it a document that broke all of that.** A *signed* tenancy agreement — scanned, so the model reads pixels, not text. Every chunk timed out, including the first, so the document went to `error` with nothing extracted; and because `error` documents weren't openable and Retry re-ran the identical oversized slice, it was a permanent dead end. The reported symptom was exactly that: *"retry passed, but I still can't see or click the document."*
+
+Measuring instead of guessing changed the fix. A typical scanned page took **20.7s**; a dense one took **34.1s** — longer than any synchronous request I'm given, and a page is the smallest unit there is to split. So the design gained two rules:
+
+- **A slow chunk is retried smaller** (two pages → one), and that narrower size is *persisted* — each resume is a different serverless container, so otherwise every request would rediscover the same thing at the same cost.
+- **A page that still won't read is skipped and named, not fatal.** Losing six readable pages to one stubborn page is precisely backwards. The document records which pages went unread, the row says "4 pages unread" rather than "looks clear", and "Try the missing pages" is offered — page latency varies between runs, so that's a real second chance rather than a button that repeats itself.
+
+And a guard against the failure that would be worse than failing: if *every* part was skipped, the document is marked unreadable rather than shown as a finished record containing nothing.
+
+The same document now: **34 fields from pages 1, 6 and 7, with 2–5 honestly reported as unread** — instead of an error with zero. Which is the real lesson: for this user, most of a rental agreement plus an honest note about the gap beats a clean failure every time.
+
+**The limitation I'm not going to pretend away:** a 34s page cannot be read inside a synchronous serverless request, so those pages stay unread until this moves to a background function with polling. That's the right next change, and it's an architecture change rather than a tuning change — which is why it isn't in here.
 
 **Three smaller ones in the same spirit:**
 
