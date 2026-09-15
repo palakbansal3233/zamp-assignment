@@ -428,3 +428,112 @@ a:hover { color: var(--color-accent-200); }
   .chat-panel { width: auto; left: var(--space-3); right: var(--space-3); max-width: none; }
   .states-panel { left: var(--space-3); right: var(--space-3); width: auto; max-width: none; }
 }
+
+/* ── motion ───────────────────────────────────────────────────────────────
+   Personality, on a short leash. Every animation here is tied to something
+   the app is actually doing — a document arriving, a value being traced back
+   to its source, a page being read — rather than movement for its own sake.
+   Nothing loops forever except the two things that genuinely are still
+   happening (reading, thinking), because a page that never settles is
+   exhausting to use.
+
+   The whole layer is switched off under prefers-reduced-motion at the bottom
+   of this file. Vestibular disorders are real, and "delightful" that makes
+   someone queasy is just broken. */
+
+@keyframes sift-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes sift-pop {
+  0%   { transform: scale(0.96); }
+  60%  { transform: scale(1.02); }
+  100% { transform: scale(1); }
+}
+@keyframes sift-sweep {
+  from { transform: translateX(-120%); }
+  to   { transform: translateX(320%); }
+}
+@keyframes sift-bob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-3px); }
+}
+@keyframes sift-flare {
+  0%   { background-color: rgba(145,132,217,0.45); }
+  100% { background-color: rgba(145,132,217,0.14); }
+}
+
+/* Documents deal themselves onto the queue rather than appearing all at
+   once — the stagger reads as "these arrived", which is what happened. */
+.queue-row { animation: sift-rise 320ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.queue-row:nth-child(1) { animation-delay: 0ms; }
+.queue-row:nth-child(2) { animation-delay: 45ms; }
+.queue-row:nth-child(3) { animation-delay: 90ms; }
+.queue-row:nth-child(4) { animation-delay: 135ms; }
+.queue-row:nth-child(5) { animation-delay: 180ms; }
+.queue-row:nth-child(n+6) { animation-delay: 220ms; }
+
+.queue-row-main.is-clickable { transition: transform 160ms ease; }
+.queue-row:hover .queue-row-main.is-clickable { transform: translateX(3px); }
+
+/* Same idea on the extracted values, so a finished read resolves into view
+   instead of blinking into existence. */
+.field-row { animation: sift-rise 300ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.field-row:nth-child(1) { animation-delay: 0ms; }
+.field-row:nth-child(2) { animation-delay: 35ms; }
+.field-row:nth-child(3) { animation-delay: 70ms; }
+.field-row:nth-child(4) { animation-delay: 105ms; }
+.field-row:nth-child(5) { animation-delay: 140ms; }
+.field-row:nth-child(n+6) { animation-delay: 170ms; }
+
+/* Clicking a value flares its source text before settling to the steady
+   highlight — the point of this product is "here is where that came from",
+   so it's worth a beat of the eye being led there. */
+.doc-seg.is-lit { animation: sift-flare 620ms ease-out; }
+
+.dropzone { transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), border-color 180ms ease, background-color 180ms ease; }
+.dropzone:hover:not(.is-disabled) { transform: translateY(-2px); }
+.dropzone.is-drag-active { transform: scale(1.012); }
+.dropzone:hover:not(.is-disabled) .dropzone-icon { animation: sift-bob 1.6s ease-in-out infinite; }
+
+.rail-btn, .rail-states-btn { transition: background-color 160ms ease, color 160ms ease, transform 160ms ease; }
+.rail-btn:hover i, .rail-states-btn:hover i { transform: scale(1.12); }
+.rail-btn i, .rail-states-btn i { transition: transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+.rail-btn.is-active { animation: sift-pop 240ms ease-out; }
+
+.btn { transition: transform 120ms ease, background-color 160ms ease, border-color 160ms ease, color 160ms ease; }
+.btn:active { transform: scale(0.97); }
+
+.sample-chip { transition: transform 160ms cubic-bezier(0.34, 1.56, 0.64, 1), border-color 160ms ease, color 160ms ease; }
+.sample-chip:hover { transform: translateY(-2px) rotate(-1deg); }
+
+.suggestion-row { transition: transform 160ms ease, border-color 160ms ease, background-color 160ms ease; }
+.suggestion-row:hover { transform: translateX(4px); }
+
+/* A page genuinely being read gets a light sweeping over it. This is the one
+   ambient loop in the app, and it stops the moment reading does. */
+.queue-row.is-pending .queue-bar-track { position: relative; overflow: hidden; }
+.queue-row.is-pending .queue-bar-track::after {
+  content: ''; position: absolute; inset: 0; width: 30%;
+  background: linear-gradient(90deg, transparent, rgba(145,132,217,0.55), transparent);
+  animation: sift-sweep 1.5s ease-in-out infinite;
+}
+.queue-row.is-pending .queue-icon { animation: sift-bob 1.8s ease-in-out infinite; }
+
+.chat-launcher { transition: transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+.chat-launcher:hover { transform: translateY(-3px) scale(1.04); }
+
+.toast { animation: sift-rise 260ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.doc-unreadable, .notfound-inner { animation: sift-rise 360ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+/* Motion is a preference, and this one is a medical accessibility setting
+   rather than a taste. Everything above degrades to no movement — the app
+   still works identically, it just stops performing. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
