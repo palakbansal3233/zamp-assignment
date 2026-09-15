@@ -96,6 +96,12 @@ export function useSift() {
   const [screen, setScreen] = useState('ingest');
   const [scen, setScen] = useState('ok');
   const [statesOpen, setStatesOpen] = useState(false);
+  // `?demo=1` turns the scenario switcher on. Read once, at mount — a URL
+  // the person didn't type shouldn't change the app under them later.
+  const [statesEnabled] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).has('demo');
+  });
 
   const [health, setHealth] = useState({ extractionConfigured: true, maxFileBytes: 4 * 1024 * 1024 });
   const [bannerDismissed, setBannerDismissed] = useState(false);
@@ -538,8 +544,8 @@ export function useSift() {
       // stranded on a spinner forever.
       const stranded = !resumingIds.includes(d._id);
       return {
-        id: d._id, name: d.filename, kind: 'Reading…', icon: iconForDocType(d.docType), clickable: true,
-        sub: d.summary || 'Reading this document in parts — everything read so far is already saved.',
+        id: d._id, name: d.filename, kind: d.docType ? prettyDocType(d.docType) : 'Reading', icon: iconForDocType(d.docType), clickable: true,
+        sub: d.summary || 'A long one — reading it in parts. Everything read so far is already saved.',
         status: 'pending',
         pct: Math.round((completedChunks / totalChunks) * 100),
         stage: `${noun} ${completedChunks} of ${totalChunks}`,
@@ -591,9 +597,14 @@ export function useSift() {
         : [],
     };
   });
+  // The three slots on a row are a tag, a subtitle and a progress caption.
+  // They used to say "Reading…", "Reading your document…" and "reading" — the
+  // same word three times, which tells you nothing twice over. Each one now
+  // answers a different question: what is this, what's happening, how far in.
   const pendingItems = inFlight.map((u) => ({
-    id: u.tempId, name: u.filename, kind: 'Reading…', icon: 'ph ph-tray-arrow-down', clickable: false,
-    sub: 'Reading your document…', status: 'pending', pct: 65, stage: 'reading',
+    id: u.tempId, name: u.filename, kind: 'New', icon: 'ph ph-tray-arrow-down', clickable: false,
+    sub: 'Uploading — reading starts the moment it lands.',
+    status: 'pending', pct: 65, stage: '',
   }));
 
   const realIngest = {
@@ -629,7 +640,6 @@ export function useSift() {
       .map((d) => ({ id: d._id, label: d.filename, active: docId === d._id, go: () => openDoc(d._id) })),
     meta: doc ? `${doc.mimeType} · ${(doc.sizeBytes / 1024).toFixed(0)}KB` : '',
     schemaNote: doc ? `${(doc.fields || []).length} details read straight from this document — nothing was assumed or filled in for you` : '',
-    newFields: (doc?.newFieldKeys || []).map(humanizeKey),
     readable: !!doc && !doc.unreadable,
     unreadableTitle: 'We couldn’t read this one',
     unreadableText: doc?.unreadableReason || 'The text wasn’t clear enough to read. A sharper photo or scan usually fixes it.',
@@ -722,7 +732,16 @@ export function useSift() {
     : null;
 
   const realAsk = {
-    heading: documents.length ? `Ask anything about your ${documents.length} document${documents.length === 1 ? '' : 's'}.` : 'Add a document first, then ask it anything.',
+    // A headline should say what this screen is *for*, not recite inventory.
+    // "Ask anything about your 2 documents" put a number nobody needs in the
+    // largest text on the page, and read like a status line. The count still
+    // matters — it just belongs in the small print underneath.
+    heading: documents.length ? 'What do you need to know?' : 'Add a document, then ask it anything',
+    subheading: documents.length
+      ? `Answers come only from your own documents${documents.length > 1 ? `, across all ${documents.length}` : ''} — and always show the line they came from.`
+      : 'Once something is read, you can ask about it in plain words.',
+    empty: documents.length === 0,
+    goDocuments: () => setScreen('ingest'),
     draft: askDraft,
     onDraft: setAskDraft,
     submit: () => runAskReal(askDraft),
@@ -799,7 +818,10 @@ export function useSift() {
     review: demoMode ? demo.review : realReview,
     ask: demoMode ? demo.ask : realAsk,
     states: {
-      open: statesOpen,
+      // Off unless explicitly asked for. See Rail.jsx for why a "Demo"
+      // control doesn't belong in the product's own navigation.
+      enabled: statesEnabled,
+      open: statesOpen && statesEnabled,
       toggle: () => setStatesOpen((o) => !o),
       current: scen,
       scenarios: SCENARIOS.map((sc) => ({ ...sc, isReal: REAL_SCENARIO_IDS.has(sc.id), run: () => setScenario(sc.id) })),

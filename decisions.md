@@ -84,11 +84,13 @@ The part I'd point at: the enforcement is **not** in the controllers. There are 
 
 **Progress that means something.** A long document reports "page group 3 of 4", not a decorative animation — because it's genuinely reading in parts and each one is genuinely saved.
 
-**The product speaks the user's language, not its own.** This one I got wrong first time and fixed after watching it read cold. The screens said *Ingest*, *Queue*, *corpus*, *schema*, *dataset*, *inferred record*, "fields extracted" — my vocabulary, describing what the system does to a file. The persona in §2 is someone holding a tenancy agreement, not someone who has ever said "corpus". The nav icons carried no labels at all, only hover tooltips, which help nobody on a touchscreen and nobody who doesn't already know what the product is. So: the rail reads **Documents / Check / Ask**; machine keys stop reaching the screen raw (`book_page` → "Book page"); a boolean renders **Yes**, not `true`; and "Clear" — which sat one screen from a "Clear all" that permanently deletes everything — became "Unhighlight". Same word, wildly different stakes, is a bug even when every individual label is defensible.
+**The product speaks the user's language, not its own.** This one I got wrong first time and fixed after watching it read cold. The screens said *Ingest*, *Queue*, *corpus*, *schema*, *dataset*, *inferred record*, "fields extracted" — my vocabulary, describing what the system does to a file. The persona in §2 is someone holding a tenancy agreement, not someone who has ever said "corpus". The nav icons carried no labels at all, only hover tooltips, which help nobody on a touchscreen and nobody who doesn't already know what the product is. So: the rail reads **Documents / Review / Ask**; machine keys stop reaching the screen raw (`book_page` → "Book page"); a boolean renders **Yes**, not `true`; and "Clear" — which sat one screen from a "Clear all" that permanently deletes everything — became "Unhighlight". Same word, wildly different stakes, is a bug even when every individual label is defensible.
 
 **Honest empty and failure states.** "No document selected" is a different message from "this document was unreadable", which is different again from "we couldn't reach the server", which is different from a real 404 for a document that was deleted. These all rendered identically at one point; they don't now. Actions that used to fail silently now say so.
 
-**The States panel is labelled.** The design includes a 15-scenario switcher. Six trigger genuine backend behaviour (a real oversized upload, a real blank scan, a real refusal). The rest need infrastructure I chose not to build (auth, billing, offline sync) and are tagged **(demo)** in the UI itself. Showing an offline banner I can't actually produce, without saying so, would be a lie told in pixels.
+**The scenario switcher is behind `?demo=1`.** The design includes a 15-scenario switcher, and six of those trigger genuine backend behaviour (a real oversized upload, a real blank scan, a real refusal); the rest need infrastructure I chose not to build (auth, billing, offline sync) and are tagged **(demo)** in the UI itself — showing an offline banner I can't actually produce, without saying so, would be a lie told in pixels. But it's a build-time tool, not a feature, and a "Demo" button sitting in the product's own navigation invites someone to click it expecting something of theirs. So it isn't in the rail; append `?demo=1` to see it. Keeping it reachable rather than deleting it is deliberate — the 15 states are real design work worth inspecting, just not worth shipping a dev control into the UI for.
+
+**What I cut, and why that's the harder call.** The Review screen used to end with *"This document was the first to mention…"* — the field keys no other document had yet. It's a true statement about the dataset and a defensible showcase of the schema-agnostic design. It is also useless to the person reading it: on your first document *every* field is new, on your second almost all of them are, and it only becomes meaningful across many documents of the same type — which is the batch-processing persona §2 explicitly says this isn't for. It told you something about my architecture, not about your lease. Cut, along with the `distinct()` query that ran on every document open to compute it.
 
 ---
 
@@ -103,7 +105,7 @@ The part I'd point at: the enforcement is **not** in the controllers. There are 
 
 ## 5. Tests
 
-**113 tests, and they're pointed at the things that would actually hurt.**
+**112 tests, and they're pointed at the things that would actually hurt.**
 
 - The query sanitizer, against injection attempts (`$where`, operator objects smuggled as values, prototype-ish paths).
 - Citation verification: a hallucinated document id, a field key that doesn't exist, a malformed citation — each dropped; and the rule that **zero surviving citations forces a refusal** rather than an ungrounded answer.
@@ -142,7 +144,7 @@ One install, one command, both servers. `server/.env.example` documents every va
 
 ## 8. Velocity
 
-Working, deployed, and verified end-to-end: ingestion for PDF / DOCX / images / text, schema-agnostic extraction with provenance, confidence and sensitivity flagging, a review flow with human confirmation, keyword + LLM-filtered search, a cited-or-refusing Ask endpoint with cross-document conflict detection, chunked resumable reading of long documents, 113 tests, a golden eval harness, and a three-screen UI built from a design system — running on one Netlify deploy with MongoDB Atlas.
+Working, deployed, and verified end-to-end: ingestion for PDF / DOCX / images / text, schema-agnostic extraction with provenance, confidence and sensitivity flagging, a review flow with human confirmation, keyword + LLM-filtered search, a cited-or-refusing Ask endpoint with cross-document conflict detection, chunked resumable reading of long documents, 112 tests, a golden eval harness, and a three-screen UI built from a design system — running on one Netlify deploy with MongoDB Atlas.
 
 Two production bugs found and fixed against the live deployment, not just locally: an Atlas IP-allowlist issue, and a `basePath` mismatch where Netlify's rewrite passes the function the original client path rather than the internal one — which every prior test had "verified" against my own wrong assumption instead of the platform's real behaviour.
 

@@ -495,20 +495,6 @@ describe('GET/DELETE /documents', () => {
     expect(res.body.fields.find((f) => f.key === 'invoice_number').value).toBe('123');
   });
 
-  test('flags which fields are new to the dataset, computed at read time', async () => {
-    const first = await seedOne({ fields: [field('invoice_number', '123')] });
-    // Second document shares "invoice_number" but introduces "vendor_name".
-    const second = await seedOne({ fields: [field('invoice_number', '124'), field('vendor_name', 'Acme')] });
-
-    const res = await request(app).get(`/documents/${second._id}`);
-    expect(res.body.newFieldKeys).toEqual(['vendor_name']);
-
-    // The first document, read after the second exists, has nothing new
-    // relative to it (invoice_number was already present elsewhere).
-    const firstAgain = await request(app).get(`/documents/${first._id}`);
-    expect(firstAgain.body.newFieldKeys).toEqual([]);
-  });
-
   test('404s for a missing document id', async () => {
     const fakeId = new mongoose.Types.ObjectId().toString();
     const res = await request(app).get(`/documents/${fakeId}`);

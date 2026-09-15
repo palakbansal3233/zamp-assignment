@@ -126,7 +126,18 @@ export default function ReviewScreen({ review }) {
 
       <div className="review-body">
         <div className="review-pane is-left">
-          {review.docLoading && <p className="text-muted" style={{ padding: 'var(--space-8)' }}>Loading document…</p>}
+          {/* Two panes side by side with no labels make you work out the
+              relationship yourself. Naming both halves — the original on the
+              left, what we made of it on the right — costs two lines and
+              removes the guess. */}
+          <div className="pane-heading">
+            <i className="ph ph-file-text" />
+            <div>
+              <h6>Document preview</h6>
+              <span className="pane-heading-note">The original, with the source of each detail highlighted</span>
+            </div>
+          </div>
+          {review.docLoading && <p className="text-muted" style={{ padding: 'var(--space-8)' }}>Reading the document…</p>}
           {!review.docLoading && !review.readable && (
             <div className="doc-unreadable">
               <i className="ph ph-file-dashed" />
@@ -144,9 +155,12 @@ export default function ReviewScreen({ review }) {
 
         <div className="review-pane">
           <div className="review-fields-header">
-            <div>
-              <h6>What we found</h6>
-              <div className="review-schema-note">{review.schemaNote}</div>
+            <div className="pane-heading">
+              <i className="ph ph-list-magnifying-glass" />
+              <div>
+                <h6>What we found</h6>
+                <span className="pane-heading-note">{review.schemaNote}</span>
+              </div>
             </div>
             <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
               {/* This used to read "Clear", one screen away from a "Clear all"
@@ -213,16 +227,6 @@ export default function ReviewScreen({ review }) {
             </section>
           )}
 
-          {review.newFields.length > 0 && (
-          <div className="new-fields-card">
-            <div className="new-fields-title">This document was the first to mention</div>
-            <div className="new-fields-tags">
-              {review.newFields.map((label) => (
-                <span key={label} className="tag tag-outline" title={`"${label}" was not seen on any other document before this one`}>{label}</span>
-              ))}
-            </div>
-          </div>
-          )}
         </div>
       </div>
     </>

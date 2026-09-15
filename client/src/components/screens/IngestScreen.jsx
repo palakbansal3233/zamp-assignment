@@ -28,7 +28,7 @@ function QueueRow({ item, onOpen }) {
                   style={{ width: `${item.pct}%` }}
                 />
               </div>
-              <div className="queue-stage">{item.stage}</div>
+              {item.stage && <div className="queue-stage">{item.stage}</div>}
             </>
           )}
           {item.status === 'done' && (
@@ -36,6 +36,20 @@ function QueueRow({ item, onOpen }) {
               <div className="queue-fieldcount">{item.fieldCount}</div>
               <div className="queue-flag">{item.flagLabel}</div>
             </>
+          )}
+          {item.clickable && (
+            /* An explicit way in. The whole row has always been clickable,
+               but a click target you can only discover by guessing isn't an
+               affordance — and "open this" is the single most common thing
+               someone wants from a row. */
+            <button
+              type="button"
+              className="btn btn-secondary queue-preview-btn"
+              title={`Open "${item.name}" to see what we read from it`}
+              onClick={(e) => { e.stopPropagation(); onOpen(item.id); }}
+            >
+              <i className="ph ph-eye" />Preview
+            </button>
           )}
         </div>
       </div>

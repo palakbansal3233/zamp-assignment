@@ -4,11 +4,11 @@
 // actually wants to do, not what the system does to their file.
 const NAV = [
   ['ingest', 'ph ph-tray', 'Documents', 'Add and see your documents'],
-  ['review', 'ph ph-columns', 'Check', 'Check what was read from a document'],
+  ['review', 'ph ph-columns', 'Review', 'Review what was read from a document'],
   ['ask', 'ph ph-chat-teardrop-text', 'Ask', 'Ask a question about your documents'],
 ];
 
-export default function Rail({ current, onGo, statesOpen, onToggleStates }) {
+export default function Rail({ current, onGo, statesOpen, onToggleStates, statesEnabled }) {
   return (
     <nav className="rail">
       <div className="rail-logo">S</div>
@@ -26,15 +26,22 @@ export default function Rail({ current, onGo, statesOpen, onToggleStates }) {
         </button>
       ))}
       <div className="rail-spacer" />
-      <button
-        type="button"
-        className={`rail-states-btn${statesOpen ? ' is-active' : ''}`}
-        title="Demo panel — preview how the app handles errors and edge cases"
-        onClick={onToggleStates}
-      >
-        <i className="ph ph-flask" />
-        <span className="rail-btn-label">Demo</span>
-      </button>
+      {/* The scenario switcher is a build-time tool, not a feature of the
+          product — a "Demo" button sitting in the navigation invites someone
+          to click it expecting something theirs. It's still reachable at
+          ?demo=1 (see README) so the 15 designed states remain inspectable
+          without shipping a dev control into the UI. */}
+      {statesEnabled && (
+        <button
+          type="button"
+          className={`rail-states-btn${statesOpen ? ' is-active' : ''}`}
+          title="Scenario switcher — preview how the app handles errors and edge cases"
+          onClick={onToggleStates}
+        >
+          <i className="ph ph-flask" />
+          <span className="rail-btn-label">States</span>
+        </button>
+      )}
     </nav>
   );
 }

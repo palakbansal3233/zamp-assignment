@@ -247,10 +247,6 @@ a:hover { color: var(--color-accent-200); }
 .field-skeleton-label { width: 150px; flex: 0 0 150px; height: 8px; border-radius: 2px; background: var(--color-neutral-900); }
 .field-skeleton-value { flex: 1; height: 8px; border-radius: 2px; background: var(--color-neutral-900); }
 
-.new-fields-card { margin-top: var(--space-8); padding: var(--space-4) var(--space-6); border: 1px solid var(--color-neutral-900); border-radius: var(--radius-md); background: var(--color-surface); }
-.new-fields-title { font-family: var(--font-heading); font-size: 13px; margin-bottom: var(--space-2); }
-.new-fields-tags { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.new-fields-tags .tag { font-size: 11px; }
 
 /* ── ask ── */
 .ask-scroll { flex: 1; min-height: 0; overflow: auto; padding: var(--space-8); }
@@ -706,3 +702,17 @@ a:hover { color: var(--color-accent-200); }
 .boot-dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--color-accent); animation: sift-blink 1.1s ease-in-out infinite; }
 .boot-dots i:nth-child(2) { animation-delay: 0.16s; }
 .boot-dots i:nth-child(3) { animation-delay: 0.32s; }
+
+.queue-preview-btn { flex: 0 0 auto; font-size: 12px; padding: 5px 12px; margin-left: var(--space-4); }
+
+/* ── pane headings ────────────────────────────────────────────────────────
+   Both halves of the Review screen say what they are. Unlabelled side-by-side
+   panes make the reader infer the relationship between them; two lines of
+   copy removes that work. */
+.pane-heading { display: flex; align-items: flex-start; gap: var(--space-3); margin-bottom: var(--space-5); }
+.pane-heading > i { font-size: 16px; color: var(--color-accent-300); margin-top: 2px; flex: 0 0 auto; }
+.pane-heading h6 { margin: 0 0 2px; color: var(--color-neutral-400); }
+.pane-heading-note { display: block; font-size: 12px; color: var(--color-neutral-500); text-wrap: pretty; }
+.review-pane.is-left .pane-heading { max-width: 660px; margin-left: auto; margin-right: auto; }
+
+.ask-subheading { margin: calc(var(--space-4) * -1) 0 var(--space-6); font-size: 13.5px; max-width: 62ch; text-wrap: pretty; }

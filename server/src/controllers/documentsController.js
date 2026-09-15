@@ -266,16 +266,6 @@ async function getDocument(req, res) {
   const doc = await Document.findById(req.params.id, LIST_PROJECTION).lean();
   if (!doc) throw new HttpError(404, 'Document not found.');
 
-  // "Fields this document added to the dataset" — computed at read time
-  // (not stored) so it can't go stale if other documents are later deleted
-  // or edited. Cheap: one distinct() over an already-indexed-by-nothing but
-  // small collection, not run on every list/upload, only when a document is
-  // actually opened.
-  const priorKeys = new Set(
-    await Document.distinct('fields.key', { _id: { $ne: doc._id }, status: 'done' })
-  );
-  doc.newFieldKeys = (doc.fields || []).map((f) => f.key).filter((k) => !priorKeys.has(k));
-
   res.json(doc);
 }
 

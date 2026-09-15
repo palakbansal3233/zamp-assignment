@@ -36,12 +36,16 @@ Open **http://localhost:5173**. That's it — one install, one command, both the
 
 Without an `ANTHROPIC_API_KEY` it still runs: uploads save, extraction reports a clear reason per document, search falls back to keyword-only, and a banner explains why.
 
+Your documents are private to your browser tab and are cleaned up when you leave — open the link in a second browser and you'll see an empty workspace, not someone else's files.
+
+**Seeing the edge cases:** append `?demo=1` (e.g. `http://localhost:5173/?demo=1`) for a scenario switcher covering all 15 designed states — failed uploads, an unreadable scan, a refusal with no supporting field, conflicting sources. Six of them drive the real backend; the rest are labelled `(demo)`. It's kept out of the normal UI because it's a build tool, not a feature.
+
 > **Atlas note:** under **Network Access**, add `0.0.0.0/0`. Serverless functions have no fixed IP, so allowing only your own machine works locally and fails in deployment.
 
 ## Tests
 
 ```bash
-npm test                          # 113 tests
+npm test                          # 112 tests
 npm run eval --workspace server   # golden eval (makes real API calls)
 ```
 

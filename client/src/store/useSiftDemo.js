@@ -277,7 +277,6 @@ export function useSiftDemo() {
       docTabs: (blank ? DOCS.concat([LAB_DOC]) : DOCS).map((d) => ({ id: d.id, label: d.label, active: s.docId === d.id, go: () => patch({ docId: d.id, active: null }) })),
       meta: blank ? 'TIFF · 2 pages · 118 dpi · OCR returned 4 characters' : denied ? 'Source restricted · fields cached 4 Sept' : doc.meta,
       schemaNote: blank ? 'Nothing to infer from yet' : partial ? '4 of 19 fields captured before the run halted' : doc.schemaNote,
-      newFields: (blank ? [] : doc.newFields || []).map(humanizeKey),
       readable: !blank && !denied,
       unreadableTitle: denied ? 'You cannot open this document' : 'No text could be recovered',
       unreadableText: denied
@@ -292,7 +291,8 @@ export function useSiftDemo() {
       goAsk: () => go('ask')
     },
     ask: {
-      heading: 'Twelve documents, no shared schema. Here is what they can answer.',
+      heading: 'What do you need to know?',
+      subheading: 'Answers come only from your own documents, across all twelve — and always show the line they came from.',
       draft: s.draft,
       onDraft: (v) => patch({ draft: v }),
       submit: () => runAsk(s.draft),

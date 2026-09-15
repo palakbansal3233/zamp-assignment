@@ -4,7 +4,15 @@ export default function AskScreen({ ask }) {
       <div className="ask-wrap">
         <h6>Ask</h6>
         <h3 className="ask-heading">{ask.heading}</h3>
+        {ask.subheading && <p className="ask-subheading text-muted">{ask.subheading}</p>}
 
+        {/* Nothing to ask yet is a dead end unless it offers the way out of
+            it — an input that can only refuse isn't worth presenting. */}
+        {ask.empty && ask.goDocuments ? (
+          <button type="button" className="btn btn-primary" title="Go and add your first document" onClick={ask.goDocuments}>
+            <i className="ph ph-plus" />Add a document
+          </button>
+        ) : (
         <div className="ask-input-row">
           <i className="ph ph-magnifying-glass" />
           <input
@@ -16,6 +24,7 @@ export default function AskScreen({ ask }) {
           />
           <button type="button" className="btn btn-primary" title="Ask this question across every document" onClick={ask.submit}>Ask</button>
         </div>
+        )}
 
         {ask.busy && (
           <div className="ask-busy-card">

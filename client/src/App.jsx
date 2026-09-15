@@ -22,7 +22,7 @@ export default function App() {
 
   return (
     <div className="sift-app">
-      <Rail current={nav.current} onGo={nav.go} statesOpen={states.open} onToggleStates={states.toggle} />
+      <Rail current={nav.current} onGo={nav.go} statesOpen={states.open} onToggleStates={states.toggle} statesEnabled={states.enabled} />
 
       <main className="sift-main">
         <TopProgress pct={topBar.pct} />
