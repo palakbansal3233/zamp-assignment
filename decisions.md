@@ -74,6 +74,10 @@ So each visitor gets their own workspace, with no account to create. `sessionSto
 
 The part I'd point at: the enforcement is **not** in the controllers. There are ~20 query sites, and one forgotten `.find()` is a silent leak that no obvious test catches. A rule that has to hold everywhere belongs somewhere it can't be bypassed by forgetting — so the session travels in `AsyncLocalStorage` and is injected by Mongoose query middleware. Code written later inherits it for free. The tests are written against observable behaviour (knowing a document's id is not enough to open it from another session) rather than the mechanism, so they'd still catch a leak if that machinery were ever replaced.
 
+**Documents sort themselves into categories.** Extraction infers a free-form `docType` per document — that's the point of §1 — which makes an excellent label and a useless organising principle, because a long-tailed vocabulary (`rental_agreement`, `book_page`, `e_stamp_certificate`) gives you one heading per document. A handful of keyword-matched buckets sits on top, so an unseen type still lands somewhere a person would look for it.
+
+**"Ask this document" means this document.** Asking a question while looking at a lease is a question about that lease, so it opens a chat pinned to it rather than jumping to the corpus-wide screen. The scoping is real, not a label: the digest handed to the model contains that document alone, so an answer drawn from elsewhere is impossible — and a citation naming another document is dropped at verification too, because leaving the prompt as the only defence would mean trusting the model to have used only what it was given, which is precisely what citation-verification exists not to do.
+
 **Motion that's tied to something real.** Documents stagger onto the queue because they genuinely arrived one at a time; clicking a value flares its source text before settling, because leading the eye to the provenance *is* the product. The only two things that loop forever are the two that are genuinely still happening — reading, and thinking about a question. All of it switches off under `prefers-reduced-motion`: vestibular disorders are real, and "delightful" that makes someone queasy is just broken.
 
 **Sensitive fields warn before they travel.** Extraction flags what shouldn't be casually shared; Review shows a standing notice, and Ask cautions when an answer draws on one. Directly serving need #4 — the prescription-to-a-friend case.
@@ -99,7 +103,7 @@ The part I'd point at: the enforcement is **not** in the controllers. There are 
 
 ## 5. Tests
 
-**107 tests, and they're pointed at the things that would actually hurt.**
+**113 tests, and they're pointed at the things that would actually hurt.**
 
 - The query sanitizer, against injection attempts (`$where`, operator objects smuggled as values, prototype-ish paths).
 - Citation verification: a hallucinated document id, a field key that doesn't exist, a malformed citation — each dropped; and the rule that **zero surviving citations forces a refusal** rather than an ungrounded answer.
@@ -138,7 +142,7 @@ One install, one command, both servers. `server/.env.example` documents every va
 
 ## 8. Velocity
 
-Working, deployed, and verified end-to-end: ingestion for PDF / DOCX / images / text, schema-agnostic extraction with provenance, confidence and sensitivity flagging, a review flow with human confirmation, keyword + LLM-filtered search, a cited-or-refusing Ask endpoint with cross-document conflict detection, chunked resumable reading of long documents, 107 tests, a golden eval harness, and a three-screen UI built from a design system — running on one Netlify deploy with MongoDB Atlas.
+Working, deployed, and verified end-to-end: ingestion for PDF / DOCX / images / text, schema-agnostic extraction with provenance, confidence and sensitivity flagging, a review flow with human confirmation, keyword + LLM-filtered search, a cited-or-refusing Ask endpoint with cross-document conflict detection, chunked resumable reading of long documents, 113 tests, a golden eval harness, and a three-screen UI built from a design system — running on one Netlify deploy with MongoDB Atlas.
 
 Two production bugs found and fixed against the live deployment, not just locally: an Atlas IP-allowlist issue, and a `basePath` mismatch where Netlify's rewrite passes the function the original client path rather than the internal one — which every prior test had "verified" against my own wrong assumption instead of the platform's real behaviour.
 

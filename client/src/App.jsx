@@ -29,14 +29,21 @@ export default function App() {
         <Banner banner={banner} />
 
         {loading ? (
-          <p className="text-muted" style={{ padding: 'var(--space-8)' }}>Loading your documents…</p>
+          <div className="boot-state">
+            <span className="boot-dots"><i /><i /><i /></span>
+            <p className="text-muted">Getting your documents…</p>
+          </div>
         ) : (
-          <>
+          /* `key` on the screen name is doing real work: it remounts the
+             subtree on every navigation, which replays the entrance
+             animation. Without it React reconciles in place and screens
+             swap with no transition at all. */
+          <div className="screen-swap" key={nav.current}>
             {nav.current === 'ingest' && <IngestScreen ingest={ingest} />}
             {nav.current === 'review' && <ReviewScreen review={review} />}
             {nav.current === 'ask' && <AskScreen ask={ask} />}
             {nav.current === 'notfound' && <NotFoundScreen onGoIngest={() => nav.go('ingest')} onGoAsk={() => nav.go('ask')} />}
-          </>
+          </div>
         )}
       </main>
 

@@ -193,6 +193,10 @@ export function useSift() {
   }, []);
 
   const openDoc = useCallback(async (id, fieldKey) => {
+    // A chat pinned to one document must not silently follow you to a
+    // different one — the scope bar would then be naming a document you're
+    // no longer looking at.
+    setChatScope((prev) => (prev && prev.documentId !== id ? null : prev));
     setDocId(id);
     setActive(fieldKey || null);
     setScreen('review');
@@ -781,7 +785,14 @@ export function useSift() {
     loading,
     loadError,
     toasts, dismissToast,
-    nav: { go: (s) => setScreen(s), current: screen },
+    nav: {
+      // Going to the Ask screen is an explicit request to ask *everything*,
+      // so a chat still pinned to one document would be contradicting the
+      // screen it's sitting on — and the launcher would read "Ask this
+      // document" with no document in sight.
+      go: (next) => { if (next === 'ask') setChatScope(null); setScreen(next); },
+      current: screen,
+    },
     topBar: demoMode ? demo.topBar : { pct: inFlight.length || deletingAll ? 60 : 0 },
     banner: demoMode ? demo.banner : loadErrorBanner || realBanner,
     ingest: demoMode ? demo.ingest : realIngest,
