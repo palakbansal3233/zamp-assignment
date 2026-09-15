@@ -77,18 +77,28 @@ async function getSuggestions(req, res) {
   const fingerprint = await computeCorpusFingerprint();
   const cached = await SuggestionCache.findById('singleton').lean();
 
-  if (cached && cached.fingerprint === fingerprint) {
+  // An empty cached list is never worth trusting — see below.
+  if (cached && cached.fingerprint === fingerprint && cached.questions.length > 0) {
     return res.json({ questions: cached.questions });
   }
 
   const digest = await buildCorpusDigest({});
   const questions = await generateSuggestions(digest);
 
-  await SuggestionCache.findByIdAndUpdate(
-    'singleton',
-    { fingerprint, questions, generatedAt: new Date() },
-    { upsert: true }
-  );
+  // Only cache a real result. Generation can come back empty for transient
+  // reasons (the model returns no tool_use, a call is cut short), and caching
+  // that pins the Ask screen to an empty suggestion list until the corpus
+  // *itself* changes — which, for someone who has finished uploading, is
+  // never. Observed exactly that: a cache holding zero questions against a
+  // current fingerprint, serving empty indefinitely. Not storing the empty
+  // case costs one retried call and lets it heal itself.
+  if (questions.length > 0) {
+    await SuggestionCache.findByIdAndUpdate(
+      'singleton',
+      { fingerprint, questions, generatedAt: new Date() },
+      { upsert: true }
+    );
+  }
 
   res.json({ questions });
 }

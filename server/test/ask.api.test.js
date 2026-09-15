@@ -171,4 +171,37 @@ describe('GET /ask/suggestions', () => {
     expect(res.body.questions).toEqual([{ text: 'Cached question?', docTypes: [] }]);
     expect(generateSuggestions).not.toHaveBeenCalled();
   });
+
+  // Seen for real: generation came back empty once (it's occasionally
+  // flaky), the empty list was cached against the current fingerprint, and
+  // the Ask screen then showed no suggestions indefinitely — the fingerprint
+  // only changes when the corpus does, which for someone who has finished
+  // uploading is never.
+  test('an empty result is never cached, so a flaky generation heals itself', async () => {
+    await seedInvoice([{ key: 'total_due', label: 'Total Due', value: 500 }]);
+    computeCorpusFingerprint.mockResolvedValue('fp-1');
+    generateSuggestions.mockResolvedValueOnce([]);
+
+    const first = await request(app).get('/ask/suggestions');
+    expect(first.body.questions).toEqual([]);
+    expect(await SuggestionCache.findById('singleton').lean()).toBeNull();
+
+    // Same fingerprint, but the next request must try again rather than
+    // serve the empty list back.
+    generateSuggestions.mockResolvedValueOnce([{ text: 'What is the total due?', docTypes: ['invoice'] }]);
+    const second = await request(app).get('/ask/suggestions');
+    expect(second.body.questions).toHaveLength(1);
+    expect(generateSuggestions).toHaveBeenCalledTimes(2);
+  });
+
+  test('a stale empty cache is not trusted either', async () => {
+    await seedInvoice([{ key: 'total_due', label: 'Total Due', value: 500 }]);
+    await SuggestionCache.create({ _id: 'singleton', fingerprint: 'fp-same', questions: [] });
+    computeCorpusFingerprint.mockResolvedValue('fp-same');
+    generateSuggestions.mockResolvedValue([{ text: 'Recovered question?', docTypes: ['invoice'] }]);
+
+    const res = await request(app).get('/ask/suggestions');
+    expect(res.body.questions).toEqual([{ text: 'Recovered question?', docTypes: ['invoice'] }]);
+    expect(generateSuggestions).toHaveBeenCalledTimes(1);
+  });
 });

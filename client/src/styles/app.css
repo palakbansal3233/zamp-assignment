@@ -367,3 +367,64 @@ a:hover { color: var(--color-accent-200); }
 
 /* ── session dialog ── */
 .session-dialog-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; background: rgba(0,0,0,0.6); }
+
+/* ── narrow screens ───────────────────────────────────────────────────────
+   The design was authored on a desktop canvas and had no responsive layer at
+   all, which on a phone produced a genuinely broken page: "Add document" ran
+   off the right edge, and the queue row's fixed 158px status column squeezed
+   the summary down to roughly 37px — rendering it one word per line.
+
+   That matters more here than it would in most products. The person this is
+   built for is holding a tenancy agreement or a prescription; a photo of it
+   is on their phone, which is very often where they'll open this. A layout
+   that only works on a laptop quietly excludes the main way the thing gets
+   used. Everything below is layout only — no token, colour or type change. */
+@media (max-width: 760px) {
+  .rail { width: 60px; flex: 0 0 60px; padding: var(--space-4) 0; }
+  .rail-btn, .rail-states-btn { width: 52px; padding: 6px 2px; }
+  .rail-btn-label { font-size: 9.5px; }
+
+  /* Title and actions stop competing for one line. */
+  .ingest-header {
+    flex-direction: column; align-items: stretch; gap: var(--space-4);
+    padding: var(--space-6) var(--space-4) var(--space-4);
+  }
+  .ingest-header h3 { font-size: 20px; line-height: 1.25; }
+  .ingest-body { padding: 0 var(--space-4) var(--space-6); }
+
+  /* The row wraps instead of crushing the summary. */
+  .queue-row { padding: var(--space-4); }
+  .queue-row-main { flex-wrap: wrap; gap: var(--space-3); }
+  /* Explicit order on every child: the type badge has no `order` of its own,
+     so it defaulted to 0 and wrapped above the filename. */
+  .queue-icon { order: 0; }
+  .queue-info { order: 1; flex: 1 1 100%; }
+  .queue-row-main .tag { order: 2; }
+  .queue-status { order: 3; width: auto; flex: 1 1 auto; text-align: left; }
+  .queue-actions { margin-left: 0; }
+  .queue-sub { text-wrap: pretty; }
+
+  .dropzone { padding: var(--space-6) var(--space-4); }
+
+  /* Source text above, extracted detail below — side-by-side panes at this
+     width would leave neither readable. */
+  .review-body { grid-template-columns: minmax(0, 1fr); }
+  .review-pane { padding: var(--space-4); }
+  .review-pane.is-left { border-right: 0; border-bottom: 1px solid var(--color-neutral-900); }
+  .review-tabsbar { padding: var(--space-3) var(--space-4); flex-wrap: wrap; gap: var(--space-2); }
+  .review-tabsbar-spacer { display: none; }
+  .review-meta { flex: 1 1 100%; }
+  .review-fields-header { flex-wrap: wrap; gap: var(--space-2); }
+
+  .ask-scroll { padding: var(--space-6) var(--space-4); }
+  .ask-heading { font-size: 20px; line-height: 1.25; }
+  .suggestions-header { flex-wrap: wrap; gap: var(--space-1); }
+  .suggestions-hint { text-align: left; flex: 1 1 100%; }
+  /* The relevance bar is decoration; the question is the point. */
+  .suggestion-bar-track { display: none; }
+  .suggestion-source { white-space: normal; }
+
+  /* A fixed-width chat panel overflows a 375px viewport. */
+  .chat-panel { width: auto; left: var(--space-3); right: var(--space-3); max-width: none; }
+  .states-panel { left: var(--space-3); right: var(--space-3); width: auto; max-width: none; }
+}
